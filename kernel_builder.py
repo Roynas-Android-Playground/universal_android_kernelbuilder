@@ -4,6 +4,7 @@ import os
 import shutil
 import re
 import time
+import logging
 from datetime import datetime
 import zipfile
 from enum import Enum
@@ -16,10 +17,16 @@ debug_popen_impl_writefile = False
 # Set default encoding to UTF-8
 UTF8Codec = "utf-8"
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    handlers=[logging.StreamHandler()],
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+
 
 def popen_impl(command: list[str]):
     if debug_popen_impl:
-        print('Execute command: "%s"...' % " ".join(command), end=" ")
+        logging.debug("Executing command: %s", " ".join(command))
     s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = s.communicate()
 
@@ -32,7 +39,7 @@ def popen_impl(command: list[str]):
             f.write(out)
         with open(stderr_log, "w") as f:
             f.write(err)
-        print(f"Output log files: {stdout_log}, {stderr_log}")
+        logging.info(f"Output log files: {stdout_log}, {stderr_log}")
 
     if s.returncode != 0:
         if debug_popen_impl:
@@ -40,7 +47,7 @@ def popen_impl(command: list[str]):
         write_logs(out, err)
         raise RuntimeError(f"Command failed: {command}. Exitcode: {s.returncode}")
     if debug_popen_impl:
-        print(f"result: {s.returncode == 0}")
+        logging.debug(f"result: {s.returncode == 0}")
         if debug_popen_impl_writefile:
             write_logs(out, err)
 
@@ -64,7 +71,7 @@ class CompilerTest:
             popen_impl(self.versionArgList)
             return True
         except Exception as e:
-            print(f"Failed to execute: {e}")
+            logging.error(f"Failed to execute: {e}")
             return False
 
     def get_version(self):
@@ -150,7 +157,7 @@ class KernelConfig:
         self._parse_info()
         self._parse_defconfig()
         self._parse_config_fragments()
-        print(f"Config parsed successfully for kernel: {self.name}")
+        logging.debug(f"Config parsed successfully: {self.name}")
 
     def clone(self):
         popen_impl(
@@ -180,21 +187,25 @@ def get_gcc_prefixes(kernel_arch: KernelArch) -> list[str]:
 
 
 def check_file(filename: str, existFn):
-    print(f"Checking file if exists: {filename}...", end=" ")
+    # Log that you're checking the file existence
+    logging.info(f"Checking if file exists: {filename}")
     exists = existFn(filename)
+
+    # Log the result of the file check
     if not exists:
-        print("Not found")
+        logging.warning(f"File not found: {filename}")
     else:
-        print("Found")
+        logging.info(f"File found: {filename}")
+
     return exists
 
 
 def zip_files(zipfilename: str, files: list[str]):
-    print(f"Zipping {len(files)} files to {zipfilename}...")
+    logging.info(f"Zipping {len(files)} files to {zipfilename}...")
     with zipfile.ZipFile(zipfilename, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for f in files:
             zf.write(f)
-    print("Done")
+    logging.info("Done")
 
 
 def choose_from_list(choices: list[str]) -> str:
@@ -238,36 +249,36 @@ def main():
     for kernelConfigFile in kernelConfigFiles:
         kernelConfig = KernelConfig(os.path.join(kernelConfigDir, kernelConfigFile))
         kernelConfigs.append(kernelConfig)
-    print(f"Parsed {len(kernelConfigs)} kernel configurations")
+    logging.info(f"Parsed {len(kernelConfigs)} kernel configurations")
 
     # Ask user what device to build for.
     device_choices = []
     for config in kernelConfigs:
         device_choices += config.devices
     device_choice = choose_from_list(device_choices)
-    print(f"Building for device: {device_choice}")
+    logging.info(f"Building for device: {device_choice}")
 
     # TODO: Maybe support multiple configs per device.
     selectedKernelConfig = [
         config for config in kernelConfigs if device_choice in config.devices
     ][0]
-    print(f"Selected kernel: {selectedKernelConfig.name}")
+    logging.info(f"Selected kernel: {selectedKernelConfig.name}")
 
     # Ask user if they want to clone the Kernel repo.
     kernelDirectory = input(
-        "Do you want to clone the Kernel repo? "
-        "If no, provide a directory with the kernel clone, else just hit enter: "
+"""Do you want to clone the Kernel repo?
+If no, provide a directory with the kernel clone, else just hit enter: """
     )
     if kernelDirectory.strip() == "":
         isCloning = not os.path.isdir(selectedKernelConfig.dest_dir())
         if isCloning:
-            print("Cloning Kernel repo...", end=" ")
+            logging.info("Cloning Kernel repo...")
             selectedKernelConfig.clone()
         os.chdir(selectedKernelConfig.dest_dir())
         if isCloning:
-            print("Done")
+            logging.info("Done")
     else:
-        print(f"Using provided kernel directory: {kernelDirectory}")
+        logging.info(f"Using provided kernel directory: {kernelDirectory}")
         os.chdir(kernelDirectory)
 
     defconfig_list = [
@@ -328,15 +339,17 @@ def main():
     targetTriple = ""
     for compiler in compilers:
         if not compiler.test_executable():
-            print(f"Unable to find {os.path.basename(compiler.get_path())} compiler")
+            logging.warning(
+                f"Unable to find {os.path.basename(compiler.get_path())} compiler"
+            )
         else:
             selectedCompiler = compiler
             break
     if selectedCompiler is None:
-        print("No available compiler found")
+        logging.fatal("No available compiler found")
         return
     else:
-        print(f"Selected compiler: {selectedCompiler.get_version()}")
+        logging.info(f"Selected compiler: {selectedCompiler.get_version()}")
         # Choose a target triple.
         if selectedCompiler.is_clang():
             match selectedKernelConfig.kernel_arch:
@@ -348,9 +361,9 @@ def main():
                     targetTriple = "aarch64-linux-gnu-"
                 case KernelArch.arm:
                     targetTriple = "arm-linux-gnueabi-"
-            print(f"Target triple: {targetTriple}")
+            logging.debug(f"Target triple: {targetTriple}")
         else:
-            print(
+            logging.debug(
                 f"Target triple: {os.path.basename(selectedCompiler.get_path())[:-4]}"
             )
 
@@ -358,8 +371,8 @@ def main():
     if os.path.isfile(".gitmodules"):
         try:
             popen_impl(["git", "submodule", "update", "--init"])
-            print("Submodules initialized successfully")
-        except subprocess.CalledProcessError as e:
+            logging.info("Submodules initialized successfully")
+        except RuntimeError:
             pass
 
     arch = selectedKernelConfig.kernel_arch.to_str()
@@ -371,7 +384,7 @@ def main():
         os.environ["PATH"] = tcPath + ":" + os.environ["PATH"]
 
     if os.path.exists(OutDirectory) and not False:
-        print("Make clean...")
+        logging.info("Make clean...")
         shutil.rmtree(OutDirectory)
 
     make_defconfig = []
@@ -387,18 +400,18 @@ def main():
     make_defconfig += defconfig_list
 
     t = datetime.now()
-    print("Make defconfig...")
+    logging.info("Make defconfig...")
     popen_impl(make_defconfig)
-    print("Make kernel...")
+    logging.info("Make kernel...")
     popen_impl(make_common)
-    print("Done")
+    logging.info("Done")
     t = datetime.now() - t
 
     with open(os.path.join(OutDirectory, "include", "generated", "utsrelease.h")) as f:
         kver = match_and_get(r'"([^"]+)"', f.read())
 
     shutil.copyfile(
-        "out/arch/arm64/boot/" + type,
+        "out/arch/" + arch + "/boot/" + type,
         os.path.join(AnyKernelDirectory, type),
     )
     zipname = (selectedKernelConfig.dest_dir() + "_{}_{}.zip").format(
@@ -425,9 +438,9 @@ def main():
         pass
     shutil.move(zipname, newZipName)
     os.chdir("..")
-    print("Kernel zip created:", newZipName)
-    print("Kernel version:", kver)
-    print("Elapsed time:", str(t.total_seconds()) + " seconds")
+    logging.info("Kernel zip created:", newZipName)
+    logging.info("Kernel version:", kver)
+    logging.info("Elapsed time:", str(t.total_seconds()) + " seconds")
 
 
 if __name__ == "__main__":
