@@ -165,7 +165,7 @@ class KernelConfig:
         )
 
     def dest_dir(self) -> str:
-        return os.path.join(os.getcwd(), self.name.replace(" ", "_"))
+        return self.name.replace(" ", "_")
 
 
 def get_gcc_prefixes(kernel_arch: KernelArch) -> list[str]:
