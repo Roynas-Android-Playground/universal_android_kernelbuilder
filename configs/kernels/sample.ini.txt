@@ -1,0 +1,78 @@
+# This is a sample INI configuration for a kernel.
+# It includes explanations for unimplemented configs such as:
+# - config_fragment.Default: Specifies whether a fragment should be applied automatically.
+# - config_fragment.Priority: Defines the order in which configuration fragments are applied.
+# - info.SimpleName: A short identifier for the kernel, useful for logging and user references.
+
+[info]
+# Full name of the kernel.
+Name=Sample Kernel for ExampleDevice
+
+# SimpleName provides a shortened version of the kernel name for easier reference.
+SimpleName=SampleKernel
+
+# URL of the repository containing the kernel source code.
+RepoUrl=https://github.com/example/kernel-repo
+
+# The branch of the repository to be used.
+RepoBranch=example-branch
+
+# Architecture of the kernel (e.g., ARM64, x86_64).
+KernelArch=ARM64
+
+# Type of the kernel image being built (e.g., Image, zImage).
+KernelType=Image.gz-dtb
+
+
+[defconfig]
+# NamingScheme defines the naming pattern for the defconfig file.
+# The {device} placeholder will be replaced by the actual device name.
+NamingScheme=vendor/{device}_defconfig
+
+# Devices lists all supported devices for this kernel build.
+Devices=device1,device2,device3
+
+
+# Configuration fragments allow for specific settings or features to be applied during the build.
+
+[config_fragment_core]
+# NamingScheme defines the path and name of the core configuration fragment.
+NamingScheme=vendor/core.config
+
+# Description provides an explanation of what this fragment does.
+Description=Enable core kernel features
+
+# Default indicates whether this fragment is applied automatically ('yes') or manually ('no').
+Default=yes
+
+# Priority determines the order in which fragments are applied, with lower values being applied first.
+Priority=0
+
+
+[config_fragment_device_specific]
+# NamingScheme for device-specific configurations.
+# The {device} placeholder will be replaced by the actual device name.
+NamingScheme=vendor/{device}_specific.config
+
+# Description explains that this fragment contains settings specific to each device.
+Description=Device-specific configurations
+
+# Default indicates that this fragment is applied automatically.
+Default=yes
+
+# Priority defines the order, this fragment will be applied after the core settings.
+Priority=1
+
+
+[config_fragment_optional]
+# NamingScheme for an optional configuration fragment, which may enable additional features.
+NamingScheme=vendor/optional.config
+
+# Description explains that this fragment enables optional features.
+Description=Enable optional kernel features
+
+# Default is set to 'no', meaning this fragment will not be applied automatically.
+Default=no
+
+# Priority defines the order, applied after core and device-specific configurations if selected.
+Priority=2
