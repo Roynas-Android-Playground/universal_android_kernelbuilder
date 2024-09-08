@@ -158,6 +158,7 @@ class KernelConfig:
                 "git",
                 "clone",
                 self.repo_url,
+                "--depth=1",
                 "-b",
                 self.repo_branch,
                 self.name.replace(" ", "_"),
