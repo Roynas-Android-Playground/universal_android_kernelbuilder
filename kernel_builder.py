@@ -9,10 +9,6 @@ import zipfile
 from datetime import datetime
 from enum import Enum
 
-debug_popen_impl = False
-debug_popen_impl_writefile = False
-debug_popen_impl_showstderr = False
-
 # Set default encoding to UTF-8
 UTF8Codec = "utf-8"
 
@@ -22,48 +18,66 @@ logging.basicConfig(
     format="%(asctime)s - %(filename)s:%(lineno)-3d - %(levelname)-8s: %(message)s",
 )
 
-def popen_impl(command: list[str]):
-    """
-    Execute a command using subprocess.Popen and handle its output and errors.
+class PopenImpl:
+    class DebugMode(Enum):
+        Off = 0,
+        Debug = 1,
+        Debug_OutputToStderr = 2,
+        Debug_OutputToFile = 3,
 
-    Parameters:
-    command (list[str]): The command to be executed.
+        def isDebug(self) -> bool:
+            return self != self.Off
 
-    Raises:
-    RuntimeError: If the command execution fails.
-    OSError: subprocess.Popen would throw that additionally.
+    debugmode = DebugMode.Off
+        
+    def run(self, command: list[str]):
+        """
+        Execute a command using subprocess.Popen and handle its output and errors.
 
-    Returns:
-    None
-    """
-    if debug_popen_impl:
-        logging.debug("Executing command: %s", " ".join(command))
+        Parameters:
+        command (list[str]): The command to be executed.
 
-    s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out, err = s.communicate()
+        Raises:
+        RuntimeError: If the command execution fails.
+        OSError: subprocess.Popen would throw that additionally.
 
-    def write_logs(out, err, failed=False):
-        out = out.decode(UTF8Codec)
-        err = err.decode(UTF8Codec)
-        if debug_popen_impl_showstderr and failed:
-            logging.error("Failed, printing process stderr output to stderr...")
-            print(err, file=sys.stderr)
-        elif debug_popen_impl_writefile:
-            stdout_log = str(s.pid) + "_stdout.log"
-            stderr_log = str(s.pid) + "_stderr.log"
-            with open(stdout_log, "w") as f:
-                f.write(out)
-            with open(stderr_log, "w") as f:
-                f.write(err)
-            logging.info(f"Output log files: {stdout_log}, {stderr_log}")
+        Returns:
+        None
+        """
+        if self.debugmode.isDebug():
+            logging.debug("Executing command: %s", " ".join(command))
 
-    if s.returncode != 0:
-        write_logs(out, err, failed=True)
-        raise RuntimeError(f"Command failed: {command}. Exitcode: {s.returncode}")
-    if debug_popen_impl:
-        logging.debug(f"result: {s.returncode == 0}")
-        write_logs(out, err)
+        s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = s.communicate()
 
+        def write_logs(out, err, failed=False):
+            out = out.decode(UTF8Codec)
+            err = err.decode(UTF8Codec)
+            if self.debugmode == self.DebugMode.Debug_OutputToStderr and failed:
+                logging.error("Failed, printing process stderr output to stderr...")
+                print(err, file=sys.stderr)
+            elif self.debugmode == self.DebugMode.Debug_OutputToFile:
+                stdout_log = str(s.pid) + "_stdout.log"
+                stderr_log = str(s.pid) + "_stderr.log"
+                with open(stdout_log, "w") as f:
+                    f.write(out)
+                with open(stderr_log, "w") as f:
+                    f.write(err)
+                logging.info(f"Output log files: {stdout_log}, {stderr_log}")
+
+        if s.returncode != 0:
+            write_logs(out, err, failed=True)
+            raise RuntimeError(f"Command failed: {command}. Exitcode: {s.returncode}")
+        if self.debugmode.isDebug():
+            logging.debug(f"result: {s.returncode == 0}")
+            write_logs(out, err)
+
+    def set_debugmode(self, mode: DebugMode) -> None:
+        self.debugmode = mode
+
+_popen_impl_inst = PopenImpl()
+popen_impl = _popen_impl_inst.run
+popen_impl_set_debugmode = _popen_impl_inst.set_debugmode
 
 def match_and_get_first(regex: str, pattern: str) -> str:
     """
@@ -206,7 +220,7 @@ class KernelType(Enum):
 
 class ToolchainConfig(Enum):
     GCCOnly = "GCCOnly",
-    GNUBinUtilsWithClang = "GNUBinClang",
+    GNUBinClang = "GNUBinClang",
     FullLLVM = "FullLLVM"
 
     @classmethod
@@ -373,7 +387,7 @@ def choose_compiler(
         KernelArch.x86: "i686-linux-gnu-",
     }
 
-    if toolchainConfig == ToolchainConfig.GNUBinUtilsWithClang:
+    if toolchainConfig == ToolchainConfig.GNUBinClang:
         raise UnImplementedError("GNUBinUtilsWithClang toolchain configuration is not supported (Unimplemented yet)")
     
     if toolchainConfig == ToolchainConfig.FullLLVM:
@@ -438,7 +452,6 @@ def main():
     mainConfig.read(iniFile)
 
     # Load popen_impl debug settings
-    global debug_popen_impl, debug_popen_impl_writefile, debug_popen_impl_showstderr
     debug_popen_impl = mainConfig.getboolean("popen_impl", "Debug", fallback=False)
     debug_popen_impl_writefile = mainConfig.getboolean(
         "popen_impl", "WriteLogFiles", fallback=False
@@ -446,6 +459,13 @@ def main():
     debug_popen_impl_showstderr = mainConfig.getboolean(
         "popen_impl", "ShowStdErrToConsole", fallback=False
     )
+    if debug_popen_impl:
+        if debug_popen_impl_showstderr:
+            popen_impl_set_debugmode(PopenImpl.DebugMode.Debug_OutputToStderr)
+        elif debug_popen_impl_writefile:
+            popen_impl_set_debugmode(PopenImpl.DebugMode.Debug_OutputToFile)
+        else:
+            popen_impl_set_debugmode(PopenImpl.DebugMode.Debug)
 
     # Load directories config
     toolchainDirectory = mainConfig.get("directory", "Toolchain")
@@ -505,7 +525,7 @@ def main():
 If no, provide a directory with the kernel clone, else just hit enter: """
         )
         if kernelDirectory.strip() == "":
-            logging.info("Cloning Kernel repo...")
+            logging.info(f"Cloning Kernel repo from {selectedKernelConfig.repo_url}...")
             selectedKernelConfig.clone()
             os.chdir(selectedKernelConfig.simple_name())
             logging.info("Done")
