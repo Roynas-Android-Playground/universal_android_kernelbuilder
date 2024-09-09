@@ -377,13 +377,13 @@ def choose_compiler(
     gcc_prefixes = {
         KernelArch.x86_64: ["x86_64-linux-gnu-", "x86_64-linux-android-"],
         KernelArch.arm64: ["aarch64-linux-gnu-", "aarch64-linux-android-"],
-        KernelArch.arm: ["arm-linux-gnueabihf-", "arm-linux-androideabi-"],
+        KernelArch.arm: ["arm-linux-gnueabi-", "arm-linux-androideabi-"],
         KernelArch.x86: ["i686-linux-gnu-", "i686-linux-android-"],
     }
     clang_prefixes = {
         KernelArch.x86_64: "x86_64-linux-gnu-",
         KernelArch.arm64: "aarch64-linux-gnu-",
-        KernelArch.arm: "arm-linux-gnueabihf-",
+        KernelArch.arm: "arm-linux-gnueabi-",
         KernelArch.x86: "i686-linux-gnu-",
     }
 
