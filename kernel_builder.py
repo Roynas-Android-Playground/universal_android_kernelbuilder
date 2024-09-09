@@ -606,6 +606,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     if os.path.exists(OutDirectory) and not False:
         logging.info("Make clean...")
         shutil.rmtree(OutDirectory)
+    os.mkdir(OutDirectory)
 
     make_defconfig = []
     make_common = [
