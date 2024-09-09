@@ -541,18 +541,22 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     def ask_and_append(frags):
         valid_answers = ["y", "n", ""]
         yes_answers = ["y", ""]
+        def append():
+            defconfig_list.append(
+                frags["NamingScheme"].replace("{device}", device_choice)
+            )
+    
         if frags["DependsOn"] is not None:
             print(f"[Depends on: {', '.join(frags['DependsOn'])}]", end=" ")
         if frags["Default"]:
             logging.info(f"Applying default-enabled config fragment '{frags['Description']}'...")
+            append()
         else:
             x = input(f"Apply config fragment '{frags['Description']}'? (Y/n): ")
             if x.lower() in valid_answers:
                 if x.lower() in yes_answers:
                     print("Answered Y.")
-                    defconfig_list.append(
-                        frags["NamingScheme"].replace("{device}", device_choice)
-                    )
+                    append()
                 else:
                     print("Answered N.")
             else:
