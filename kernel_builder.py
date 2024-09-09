@@ -18,18 +18,19 @@ logging.basicConfig(
     format="%(asctime)s - %(filename)s:%(lineno)-3d - %(levelname)-8s: %(message)s",
 )
 
+
 class PopenImpl:
     class DebugMode(Enum):
-        Off = 0,
-        Debug = 1,
-        Debug_OutputToStderr = 2,
-        Debug_OutputToFile = 3,
+        Off = (0,)
+        Debug = (1,)
+        Debug_OutputToStderr = (2,)
+        Debug_OutputToFile = (3,)
 
         def isDebug(self) -> bool:
             return self != self.Off
 
     debugmode = DebugMode.Off
-        
+
     def run(self, command: list[str]):
         """
         Execute a command using subprocess.Popen and handle its output and errors.
@@ -75,9 +76,11 @@ class PopenImpl:
     def set_debugmode(self, mode: DebugMode) -> None:
         self.debugmode = mode
 
+
 _popen_impl_inst = PopenImpl()
 popen_impl = _popen_impl_inst.run
 popen_impl_set_debugmode = _popen_impl_inst.set_debugmode
+
 
 def match_and_get_first(regex: str, pattern: str) -> str:
     """
@@ -100,9 +103,11 @@ def match_and_get_first(regex: str, pattern: str) -> str:
         )
     return matched.group(1)
 
+
 class CompilerType(Enum):
     GCC = "gcc"
     Clang = "clang"
+
 
 class CompilerTest:
     def __init__(self, exe_path: str, versionRegex: str) -> None:
@@ -219,8 +224,8 @@ class KernelType(Enum):
 
 
 class ToolchainConfig(Enum):
-    GCCOnly = "GCCOnly",
-    GNUBinClang = "GNUBinClang",
+    GCCOnly = ("GCCOnly",)
+    GNUBinClang = ("GNUBinClang",)
     FullLLVM = "FullLLVM"
 
     @classmethod
@@ -229,9 +234,10 @@ class ToolchainConfig(Enum):
             return cls[toolchain_str]
         except KeyError:
             raise ValueError(f"Unsupported toolchain configuration: {toolchain_str}")
-    
+
     def to_str(self):
         return self.name
+
 
 class KernelConfig:
     def _parse_info(self):
@@ -326,8 +332,10 @@ class KernelConfig:
     def simple_name(self) -> str:
         return self._simple_name
 
+
 class UnImplementedError(Exception):
     pass
+
 
 def check_file(filename: str, existFn):
     # Log that you're checking the file existence
@@ -388,8 +396,10 @@ def choose_compiler(
     }
 
     if toolchainConfig == ToolchainConfig.GNUBinClang:
-        raise UnImplementedError("GNUBinUtilsWithClang toolchain configuration is not supported (Unimplemented yet)")
-    
+        raise UnImplementedError(
+            "GNUBinUtilsWithClang toolchain configuration is not supported (Unimplemented yet)"
+        )
+
     if toolchainConfig == ToolchainConfig.FullLLVM:
         # Create CompilerTest instances for gcc and clang.
         ClangCompilerTest = CompilerTest(
@@ -435,6 +445,7 @@ def choose_compiler(
         logging.debug(f"Target triple: {targetTriple}")
         return selectedCompiler, targetTriple
 
+
 llvm_sets = {
     "CC": "clang",
     "LD": "ld.lld",
@@ -443,6 +454,132 @@ llvm_sets = {
     "OBJCOPY": "llvm-objcopy",
     "OBJDUMP": "llvm-objdump",
 }
+
+from collections import defaultdict, deque
+
+def build_dependency_graph(fragments):
+    """
+    Build the dependency graph for the kernel configuration fragments.
+
+    Parameters:
+    fragments (list[dict]): List of kernel configuration fragments.
+
+    Returns:
+    tuple[defaultdict, defaultdict]: A graph representing dependencies and a dictionary with in-degrees.
+    """
+    graph = defaultdict(list)  # Adjacency list for graph
+    in_degree = defaultdict(int)  # Track in-degree of each fragment (number of dependencies)
+
+    # Build the graph and in-degree map
+    for fragment in fragments:
+        # If a fragment has dependencies, add edges in the graph
+        if fragment["DependsOn"] is not None:
+            for dependency in fragment["DependsOn"]:
+                # Add edge from dependency to fragment
+                graph[dependency].append(fragment["NamingScheme"])
+                # Increment in-degree for the fragment that depends on this
+                in_degree[fragment["NamingScheme"]] += 1
+        else:
+            # Ensure all fragments are in the in-degree map
+            if fragment["NamingScheme"] not in in_degree:
+                in_degree[fragment["NamingScheme"]] = 0
+
+    return graph, in_degree
+
+def topological_sort(fragments):
+    """
+    Perform topological sorting on the fragments based on their dependencies.
+
+    Parameters:
+    fragments (list[dict]): List of kernel configuration fragments.
+
+    Returns:
+    list[dict]: A topologically sorted list of fragments.
+    """
+    graph, in_degree = build_dependency_graph(fragments)
+    sorted_fragments = []
+
+    # Initialize a queue with fragments that have no dependencies (in-degree 0)
+    queue = deque([frag for frag in fragments if in_degree[frag["NamingScheme"]] == 0])
+
+    while queue:
+        current_fragment = queue.popleft()  # Get a fragment with no remaining dependencies
+        sorted_fragments.append(current_fragment)
+
+        # Reduce the in-degree of dependent fragments
+        for dependent in graph[current_fragment["NamingScheme"]]:
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:  # If no more dependencies, add to queue
+                queue.append(next(frag for frag in fragments if frag["NamingScheme"] == dependent))
+
+    # Check if there's a cycle (unresolved dependencies)
+    if len(sorted_fragments) != len(fragments):
+        raise RuntimeError("Dependency cycle detected in fragments")
+
+    return sorted_fragments
+
+def apply_fragments(selectedKernelConfig, device_choice):
+    """
+    Apply the kernel configuration fragments in the correct order of dependency resolution,
+    while asking the user whether to apply certain fragments.
+
+    Parameters:
+    selectedKernelConfig (KernelConfig): The selected kernel configuration.
+    device_choice (str): The device for which to build.
+
+    Returns:
+    list[str]: List of applied fragments in topological order.
+    """
+    applied_fragments = []
+    defconfig_list = []
+    skipped_fragments = set()  # Track fragments that were skipped
+
+    # Filter fragments that are applicable to the current device
+    applicable_fragments = [
+        fragment for fragment in selectedKernelConfig.config_fragments
+        if fragment["TargetDevice"] is None or device_choice in fragment["TargetDevice"]
+    ]
+
+    # Perform topological sorting on the applicable fragments
+    sorted_fragments = topological_sort(applicable_fragments)
+
+    # Apply the fragments in topologically sorted order
+    for fragment in sorted_fragments:
+        fragment_name = fragment["NamingScheme"].replace("{device}", device_choice)
+
+        # Check if any of this fragment's dependencies were skipped
+        if fragment["DependsOn"] is not None and any(dep in skipped_fragments for dep in fragment["DependsOn"]):
+            logging.info(f"Skipping fragment '{fragment_name}' because a dependency was not applied.")
+            skipped_fragments.add(fragment_name)  # Mark as skipped
+            continue
+
+        # If the fragment is default-enabled, apply it automatically
+        if fragment["Default"]:
+            logging.info(f"Applying default-enabled fragment: {fragment_name} ({fragment['Description']})")
+            defconfig_list.append(fragment_name)
+            applied_fragments.append(fragment_name)
+        else:
+            # Ask the user whether to apply the fragment
+            valid_answers = ["y", "n", ""]
+            yes_answers = ["y", ""]
+            answer = input(f"Apply fragment '{fragment['Description']}' ({fragment_name})? (Y/n): ").lower()
+
+            # Handle the user's answer
+            if answer in valid_answers:
+                if answer in yes_answers:
+                    logging.info(f"Applying user-selected fragment: {fragment_name}")
+                    defconfig_list.append(fragment_name)
+                    applied_fragments.append(fragment_name)
+                else:
+                    logging.info(f"Skipping fragment: {fragment_name}")
+                    skipped_fragments.add(fragment_name)  # Mark as skipped
+            else:
+                logging.warning(f"Invalid input. Skipping fragment: {fragment_name}")
+                skipped_fragments.add(fragment_name)  # Mark as skipped
+
+    return defconfig_list
+
+
 
 def main():
     # Parse the main ini file.
@@ -479,7 +616,9 @@ def main():
         logging.warning("Invalid JobsCountFormula (Need a lvalue x and rvalue)")
         JobCountFormula = "x"
     jobsCount = eval(JobCountFormula, {"x": os.cpu_count()})
-    logging.info(f"Calculated JobsCount: {jobsCount} from '{JobCountFormula}' where x is {os.cpu_count()}")
+    logging.info(
+        f"Calculated JobsCount: {jobsCount} from '{JobCountFormula}' where x is {os.cpu_count()}"
+    )
 
     # Parse the kernel specific ini files.
     kernelConfigDir = os.path.join("configs", "kernels", "")
@@ -502,7 +641,7 @@ def main():
     device_choices = []
     for config in kernelConfigs:
         device_choices += config.devices
-    
+
     # Sort the device choices alphabetically.
     device_choices.sort()
     device_choice = choose_from_list(device_choices)
@@ -535,53 +674,19 @@ If no, provide a directory with the kernel clone, else just hit enter: """
 
     defconfig_list = [
         selectedKernelConfig.namingscheme.replace("{device}", device_choice)
-    ]
-
-    # Check if user wants additional kernel config fragments.
-    def ask_and_append(frags):
-        valid_answers = ["y", "n", ""]
-        yes_answers = ["y", ""]
-        def append():
-            defconfig_list.append(
-                frags["NamingScheme"].replace("{device}", device_choice)
-            )
+    ] 
     
-        if frags["DependsOn"] is not None:
-            print(f"[Depends on: {', '.join(frags['DependsOn'])}]", end=" ")
-        if frags["Default"]:
-            logging.info(f"Applying default-enabled config fragment '{frags['Description']}'...")
-            append()
-        else:
-            x = input(f"Apply config fragment '{frags['Description']}'? (Y/n): ")
-            if x.lower() in valid_answers:
-                if x.lower() in yes_answers:
-                    print("Answered Y.")
-                    append()
-                else:
-                    print("Answered N.")
-            else:
-                print("Invalid input.")
-
-    def is_in_target(frags) -> bool:
-        return frags["TargetDevice"] is None or device_choice in frags["TargetDevice"]
-
-    # First, apply fragments without requirement.
-    for frags in selectedKernelConfig.config_fragments:
-        if is_in_target(frags) and frags["DependsOn"] is None:
-            ask_and_append(frags)
-
-    # Second, apply fragments with requirements. Although this would not work for more than
-    # Three relation trees...
-    for frags in selectedKernelConfig.config_fragments:
-        if (
-            is_in_target(frags)
-            and frags["DependsOn"] is not None
-            and all(depends in defconfig_list for depends in frags["DependsOn"])
-        ):
-            ask_and_append(frags)
+    # Apply fragments based on dependencies, with user interaction
+    try:
+        defconfig_list += apply_fragments(selectedKernelConfig, device_choice)
+    except RuntimeError as e:
+        logging.error(f"Error applying fragments: {str(e)}")
+        return
 
     selectedCompiler, targetTriple = choose_compiler(
-        toolchainDirectory, selectedKernelConfig.toolchain_config, selectedKernelConfig.kernel_arch
+        toolchainDirectory,
+        selectedKernelConfig.toolchain_config,
+        selectedKernelConfig.kernel_arch,
     )
 
     if targetTriple is None:
