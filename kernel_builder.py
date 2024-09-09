@@ -375,19 +375,25 @@ def choose_from_list(choices: list[str]) -> str:
         except ValueError:
             print("Invalid choice. Please enter a number.")
 
+def find_available_compilers(toolchain_directory, kernel_arch, toolchain_config):
+    """
+    Find available compilers based on the kernel architecture and toolchain configuration.
 
-def choose_compiler(
-    toolchainDirectory: str, toolchainConfig: ToolchainConfig, kernelArch: KernelArch
-) -> tuple[CompilerTest, str]:
-    # Check if clang and gcc are available.
-    compilers = []
-    # Declare known cross compile triples for gcc and clang.
+    Parameters:
+    - toolchain_directory (str): The path to the toolchain directory.
+    - kernel_arch (KernelArch): The architecture of the kernel.
+    - toolchain_config (ToolchainConfig): The toolchain configuration (GCCOnly, FullLLVM, etc.).
+
+    Returns:
+    - list[CompilerTest]: A list of available compiler tests.
+    """
     gcc_prefixes = {
         KernelArch.x86_64: ["x86_64-linux-gnu-", "x86_64-linux-android-"],
         KernelArch.arm64: ["aarch64-linux-gnu-", "aarch64-linux-android-"],
         KernelArch.arm: ["arm-linux-gnueabi-", "arm-linux-androideabi-"],
         KernelArch.x86: ["i686-linux-gnu-", "i686-linux-android-"],
     }
+
     clang_prefixes = {
         KernelArch.x86_64: "x86_64-linux-gnu-",
         KernelArch.arm64: "aarch64-linux-gnu-",
@@ -395,56 +401,105 @@ def choose_compiler(
         KernelArch.x86: "i686-linux-gnu-",
     }
 
-    if toolchainConfig == ToolchainConfig.GNUBinClang:
-        raise UnImplementedError(
-            "GNUBinUtilsWithClang toolchain configuration is not supported (Unimplemented yet)"
+    compilers = []
+
+    # Check the toolchain configuration and create appropriate CompilerTest objects
+    if toolchain_config == ToolchainConfig.FullLLVM:
+        clang_compiler = CompilerTest(
+            exe_path=os.path.join(toolchain_directory, "bin", "clang"),
+            versionRegex=r"(.*?clang version \d+(\.\d+)*).*"
         )
+        compilers.append(clang_compiler)
 
-    if toolchainConfig == ToolchainConfig.FullLLVM:
-        # Create CompilerTest instances for gcc and clang.
-        ClangCompilerTest = CompilerTest(
-            os.path.join(toolchainDirectory, "bin", "clang"),
-            r"(.*?clang version \d+(\.\d+)*).*",
+    for prefix in gcc_prefixes[kernel_arch]:
+        gcc_compiler = CompilerTest(
+            exe_path=os.path.join(toolchain_directory, "bin", prefix + "gcc"),
+            versionRegex=r"(.*?gcc \(.*\) \d+(\.\d+)*)"
         )
-        compilers.append(ClangCompilerTest)
-    compilers += [
-        CompilerTest(path, r"(.*?gcc \(.*\) \d+(\.\d+)*)")
-        for path in [
-            os.path.join(toolchainDirectory, "bin", prefix + "gcc")
-            for prefix in gcc_prefixes[kernelArch]
-        ]
-    ]
+        compilers.append(gcc_compiler)
 
-    # Check if any compiler is available.
-    selectedCompiler = None
-    logging.info("Scanning for available compilers...")
+    return compilers
 
-    # Choose a compiler.
-    # Try to invoke the compiler to get its version.
+
+def select_compiler(compilers):
+    """
+    Select the first available compiler by testing each one in order.
+
+    Parameters:
+    - compilers (list[CompilerTest]): A list of CompilerTest objects to test.
+
+    Returns:
+    - CompilerTest: The first available compiler, or None if no compiler is found.
+    """
     for compiler in compilers:
-        if not compiler.test_executable():
-            logging.warning(
-                f"Unable to find {os.path.basename(compiler.get_path())} compiler"
-            )
+        if compiler.test_executable():
+            logging.info(f"Selected compiler: {compiler.get_version()}")
+            return compiler
         else:
-            selectedCompiler = compiler
-            break
+            logging.warning(f"Compiler {compiler.get_path()} not available.")
+    return None
 
-    if selectedCompiler is None:
-        logging.fatal("No available compiler found")
-        return None, None
+
+def determine_target_triple(compiler, kernel_arch):
+    """
+    Determine the target triple based on the selected compiler and kernel architecture.
+
+    Parameters:
+    - compiler (CompilerTest): The selected compiler.
+    - kernel_arch (KernelArch): The architecture of the kernel.
+
+    Returns:
+    - str: The target triple for cross-compilation, or None if unsupported.
+    """
+    clang_prefixes = {
+        KernelArch.x86_64: "x86_64-linux-gnu-",
+        KernelArch.arm64: "aarch64-linux-gnu-",
+        KernelArch.arm: "arm-linux-gnueabi-",
+        KernelArch.x86: "i686-linux-gnu-",
+    }
+
+    if compiler.get_compiler_type() == CompilerType.Clang:
+        return clang_prefixes[kernel_arch]
+    elif compiler.get_compiler_type() == CompilerType.GCC:
+        return os.path.basename(compiler.get_path())[:-3]  # Strip 'gcc' suffix
     else:
-        logging.info(f"Selected compiler: {selectedCompiler.get_version()}")
-        # Choose a target triple.
-        match selectedCompiler.get_compiler_type():
-            case CompilerType.Clang:
-                targetTriple = clang_prefixes[kernelArch]
-            case CompilerType.GCC:
-                # In case of GCC, we would strip the gcc suffix from the executable path.
-                targetTriple = os.path.basename(selectedCompiler.get_path())[:-3]
-        logging.debug(f"Target triple: {targetTriple}")
-        return selectedCompiler, targetTriple
+        logging.error("Unsupported compiler type.")
+        return None
 
+
+def choose_compiler(toolchain_directory, toolchain_config, kernel_arch):
+    """
+    Choose the appropriate compiler for the build process based on the toolchain configuration
+    and kernel architecture.
+
+    Parameters:
+    - toolchain_directory (str): The path to the toolchain directory.
+    - toolchain_config (ToolchainConfig): The toolchain configuration (e.g., GCCOnly, FullLLVM).
+    - kernel_arch (KernelArch): The architecture of the kernel (e.g., x86_64, arm64).
+
+    Returns:
+    - tuple[CompilerTest, str]: The selected compiler and its target triple, or (None, None) if no compiler is found.
+    """
+    logging.info("Searching for available compilers...")
+
+    try:
+        compilers = find_available_compilers(toolchain_directory, kernel_arch, toolchain_config)
+
+        selected_compiler = select_compiler(compilers)
+        if not selected_compiler:
+            logging.error("No suitable compiler found.")
+            return None, None
+
+        target_triple = determine_target_triple(selected_compiler, kernel_arch)
+        if not target_triple:
+            logging.error("Unable to determine target triple.")
+            return None, None
+
+        return selected_compiler, target_triple
+
+    except UnImplementedError as e:
+        logging.error(f"Unimplemented toolchain configuration: {str(e)}")
+        return None, None
 
 llvm_sets = {
     "CC": "clang",
