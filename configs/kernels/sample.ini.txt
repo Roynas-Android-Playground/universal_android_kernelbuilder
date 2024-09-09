@@ -1,8 +1,6 @@
 # This is a sample INI configuration for a kernel.
 # It includes explanations for unimplemented configs such as:
-# - config_fragment.Default: Specifies whether a fragment should be applied automatically.
 # - config_fragment.Priority: Defines the order in which configuration fragments are applied.
-# - info.SimpleName: A short identifier for the kernel, useful for logging and user references.
 
 [info]
 # Full name of the kernel.
@@ -23,6 +21,8 @@ KernelArch=ARM64
 # Type of the kernel image being built (e.g., Image, zImage).
 KernelType=Image.gz-dtb
 
+# Toolchain support of the kernel. Supported values are: GCCOnly, GNUBinClang, FullLLVM
+ToolchainConfig=FullLLVM
 
 [defconfig]
 # NamingScheme defines the naming pattern for the defconfig file.
@@ -42,8 +42,8 @@ NamingScheme=vendor/core.config
 # Description provides an explanation of what this fragment does.
 Description=Enable core kernel features
 
-# Default indicates whether this fragment is applied automatically ('yes') or manually ('no').
-Default=yes
+# Default indicates whether this fragment is applied automatically ('on') or manually ('off').
+Default=on
 
 # Priority determines the order in which fragments are applied, with lower values being applied first.
 Priority=0
@@ -58,7 +58,7 @@ NamingScheme=vendor/{device}_specific.config
 Description=Device-specific configurations
 
 # Default indicates that this fragment is applied automatically.
-Default=yes
+Default=off
 
 # Priority defines the order, this fragment will be applied after the core settings.
 Priority=1
@@ -71,8 +71,8 @@ NamingScheme=vendor/optional.config
 # Description explains that this fragment enables optional features.
 Description=Enable optional kernel features
 
-# Default is set to 'no', meaning this fragment will not be applied automatically.
-Default=no
+# Default is set to 'off', meaning this fragment will not be applied automatically.
+Default=off
 
 # Priority defines the order, applied after core and device-specific configurations if selected.
 Priority=2
