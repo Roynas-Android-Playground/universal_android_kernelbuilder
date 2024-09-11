@@ -31,12 +31,13 @@ class PopenImpl:
 
     debugmode = DebugMode.Off
 
-    def run(self, command: list[str]):
+    def run(self, command: list[str], **kwargs):
         """
         Execute a command using subprocess.Popen and handle its output and errors.
 
         Parameters:
         command (list[str]): The command to be executed.
+        **kwargs: Additional keyword arguments for subprocess.Popen.
 
         Raises:
         RuntimeError: If the command execution fails.
@@ -48,7 +49,7 @@ class PopenImpl:
         if self.debugmode.isDebug():
             logging.debug("Executing command: %s", " ".join(command))
 
-        s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
         out, err = s.communicate()
 
         def write_logs(out, err, failed=False):
@@ -760,8 +761,8 @@ If no, provide a directory with the kernel clone, else just hit enter: """
 
     # Add toolchain in PATH environment variable
     tcPath = os.path.join(os.getcwd(), toolchainDirectory, "bin")
-    if tcPath not in os.environ["PATH"].split(os.pathsep):
-        os.environ["PATH"] = tcPath + ":" + os.environ["PATH"]
+    newEnv = os.environ.copy()
+    newEnv["PATH"] = tcPath + ":" + newEnv["PATH"]
 
     if os.path.exists(OutDirectory) and not False:
         logging.info("Make clean...")
@@ -790,9 +791,9 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     t = datetime.now()
     try:
         logging.info("Make defconfig...")
-        popen_impl(make_defconfig)
+        popen_impl(make_defconfig, env=newEnv)
         logging.info("Make kernel...")
-        popen_impl(make_common)
+        popen_impl(make_common, env=newEnv)
         logging.info("Done")
     except RuntimeError as e:
         # If these failed, then goodbye.
