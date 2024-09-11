@@ -821,7 +821,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             os.path.join(OutDirectory, "arch", arch, "boot", type),
             os.path.join(AnyKernelDirectory, type),
         )
-        zipname = (selectedKernelConfig.dest_dir() + "_{}_{}.zip").format(
+        zipname = (selectedKernelConfig.simple_name() + "_{}_{}.zip").format(
             device_choice, datetime.today().strftime("%Y-%m-%d")
         )
         os.chdir(AnyKernelDirectory)
