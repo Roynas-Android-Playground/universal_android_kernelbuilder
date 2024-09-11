@@ -21,7 +21,11 @@ KernelArch=ARM64
 # Type of the kernel image being built (e.g., Image, zImage).
 KernelType=Image.gz-dtb
 
-# Toolchain support of the kernel. Supported values are: GCCOnly, GNUBinClang, FullLLVM
+# Toolchain support of the kernel. Supported values are: GCCOnly, GNUBinClang, FullLLVM, FullLLVMWithIAS
+# GCCOnly: The kernel needs pure GCC toolchain and binutils.
+# GNUBinClang: The kernel needs GCC binutils but can use clang as CC.
+# FullLLVM: The kernel can be compiled with clang and full LLVM binutils.
+# FullLLVMWithIAS: Same as above, but LLVM=1 and LLVM_IAS=1 is supported by the kernel.
 ToolchainConfig=FullLLVM
 
 # AnyKernel3 directory in the kernel relative to the kernel root.

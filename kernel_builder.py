@@ -9,9 +9,6 @@ import zipfile
 from datetime import datetime
 from enum import Enum
 
-# Set default encoding to UTF-8
-UTF8Codec = "utf-8"
-
 logging.basicConfig(
     level=logging.DEBUG,
     handlers=[logging.StreamHandler()],
@@ -43,17 +40,17 @@ class PopenImpl:
         OSError: subprocess.Popen would throw that additionally.
 
         Returns:
-        None
+        Tuple[str, str]: The command's standard output and standard error.
         """
         if self.debugmode.isDebug():
             logging.debug("Executing command: %s", " ".join(command))
 
-        s = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        s = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
+        )
         out, err = s.communicate()
 
         def write_logs(out, err, failed=False):
-            out = out.decode(UTF8Codec)
-            err = err.decode(UTF8Codec)
             if self.debugmode == self.DebugMode.Debug_OutputToFile:
                 stdout_log = str(s.pid) + "_stdout.log"
                 stderr_log = str(s.pid) + "_stderr.log"
@@ -73,13 +70,34 @@ class PopenImpl:
             logging.debug(f"result: {s.returncode == 0}")
             write_logs(out, err)
 
+        return out, err
+
     def set_debugmode(self, mode: DebugMode) -> None:
         self.debugmode = mode
+
+    def test_executable(self, path: str, args: list[str] = []) -> bool:
+        """
+        Test if an executable file exists and can be executed with the provided arguments.
+
+        Parameters:
+        path (str): The path to the executable file.
+        args (list[str]): The arguments to be passed to the executable.
+
+        Returns:
+        bool: True if the executable exists and can be executed with the provided arguments, False otherwise.
+        """
+        try:
+            self.run([path] + args)
+            return True
+        except FileNotFoundError | RuntimeError as e:
+            logging.warning(f"Execution of {path} with args: {args} failed: {str(e)}")
+            return False
 
 
 _popen_impl_inst = PopenImpl()
 popen_impl = _popen_impl_inst.run
 popen_impl_set_debugmode = _popen_impl_inst.set_debugmode
+popen_impl_test_executable = _popen_impl_inst.test_executable
 
 
 def match_and_get_first(regex: str, pattern: str) -> str:
@@ -104,91 +122,6 @@ def match_and_get_first(regex: str, pattern: str) -> str:
     return matched.group(1)
 
 
-class CompilerType(Enum):
-    GCC = "gcc"
-    Clang = "clang"
-
-
-class CompilerTest:
-    def __init__(self, exe_path: str, versionRegex: str) -> None:
-        """
-        Initialize a CompilerTest instance.
-
-        Parameters:
-        exe_path (str): The path to the compiler executable.
-        versionRegex (str): The regular expression used to extract the version from the compiler's output.
-
-        Returns:
-        None
-        """
-        self.versionRegex = versionRegex
-        self.versionArgList = [exe_path, "--version"]
-        self.executable_path = exe_path
-
-    def test_executable(self):
-        """
-        Test if the compiler executable can be executed.
-
-        Parameters:
-        None
-
-        Returns:
-        bool: True if the executable can be executed, False otherwise.
-        """
-        try:
-            popen_impl(self.versionArgList)
-            return True
-        except (OSError, RuntimeError) as e:
-            logging.error(f"Failed to execute: {e}")
-            return False
-
-    def get_version(self):
-        """
-        Get the version of the compiler.
-
-        This function executes the compiler with the '--version' argument and extracts the version
-        information using a regular expression.
-
-        Parameters:
-        None
-
-        Returns:
-        str: The version of the compiler.
-        """
-        s = subprocess.Popen(
-            self.versionArgList, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
-        tcversion, _ = s.communicate()
-        tcversion = tcversion.decode(UTF8Codec)
-        return match_and_get_first(self.versionRegex, tcversion)
-
-    def get_path(self) -> str:
-        """
-        Get the path of the compiler executable.
-
-        Returns:
-        str: The path of the compiler executable.
-        """
-        return self.executable_path
-
-    def get_compiler_type(self) -> CompilerType:
-        """
-        Determine the type of compiler based on the executable path.
-
-        Returns:
-        CompilerType: The type of compiler (either GCC or Clang).
-
-        Raises:
-        ValueError: If the compiler executable path does not match either GCC or Clang.
-        """
-        if self.executable_path.endswith("gcc"):
-            return CompilerType.GCC
-        elif self.executable_path.endswith("clang"):
-            return CompilerType.Clang
-        else:
-            raise ValueError("Unsupported compiler executable path")
-
-
 class KernelArch(Enum):
     x86_64 = "x86_64"
     arm64 = "arm64"
@@ -204,6 +137,18 @@ class KernelArch(Enum):
 
     def to_str(self):
         return self.name
+
+
+class ForEachArch(dict):
+    def __init__(self, arm: str, arm64: str, x86: str, x86_64: str):
+        super().__init__(
+            {
+                KernelArch.arm: arm,
+                KernelArch.arm64: arm64,
+                KernelArch.x86: x86,
+                KernelArch.x86_64: x86_64,
+            }
+        )
 
 
 class KernelType(Enum):
@@ -223,10 +168,77 @@ class KernelType(Enum):
         return self.name
 
 
+class CompilerType(Enum):
+    GCC = "gcc"
+    Clang = "clang"
+    GCCAndroid = "gcc-android"  # The old GCC 4.9 used in Android, now deprecated.
+
+    def get_triples(self, arch: KernelArch) -> str:
+        match self:
+            case CompilerType.GCC | CompilerType.Clang:
+                return CompilerType.common_triples[arch]
+            case CompilerType.GCCAndroid:
+                return CompilerType.android_triples[arch]
+        raise ValueError(f"Unsupported compiler type: {self}")
+
+    @staticmethod
+    def determine_type(path: str) -> "CompilerType":
+        exename = os.path.basename(path)
+        if exename.endswith("gcc"):
+            return CompilerType.GCC
+        elif exename == "clang":
+            return CompilerType.Clang
+        elif "android-" in exename:
+            return CompilerType.GCCAndroid
+        else:
+            raise ValueError(f"Unsupported compiler: {exename}")
+
+    def extract_version(self, output: str) -> str:
+        match self:
+            case CompilerType.GCC | CompilerType.GCCAndroid:
+                return match_and_get_first(self.gcc_version_regex, output)
+            case CompilerType.Clang:
+                return match_and_get_first(self.clang_version_regex, output)
+        raise ValueError(f"Unsupported compiler type: {self}")
+
+    def toolchain_version(self, tcPath: str, arch: KernelArch) -> str:
+        out, _ = popen_impl(
+            [os.path.join(tcPath, self.toolchain_exe(arch)), "--version"]
+        )
+        return self.extract_version(out)
+
+    def toolchain_exe(self, arch: KernelArch) -> str:
+        match self:
+            case CompilerType.GCC | CompilerType.GCCAndroid:
+                return f"{self.get_triples(arch)}gcc"
+            case CompilerType.Clang:
+                return "clang"
+        raise ValueError(f"Unsupported compiler type: {self}")
+
+
+# Used by GCC/Clang
+CompilerType.common_triples = ForEachArch(
+    arm="arm-linux-gnueabi-",
+    arm64="aarch64-linux-gnu-",
+    x86="i686-linux-gnu-",
+    x86_64="x86_64-linux-gnu-",
+)
+
+# Used by GCC-Android
+CompilerType.android_triples = {
+    key: value.replace("gnu", "android")
+    for key, value in CompilerType.common_triples.items()
+}
+
+CompilerType.gcc_version_regex = r"(.*?gcc \(.*\) \d+(\.\d+)*)"
+CompilerType.clang_version_regex = r"(.*?clang version \d+(\.\d+)*).*"
+
+
 class ToolchainConfig(Enum):
     GCCOnly = "GCCOnly"
     GNUBinClang = "GNUBinClang"
     FullLLVM = "FullLLVM"
+    FullLLVMWithIAS = "FullLLVMWithIAS"
 
     @classmethod
     def from_str(cls, toolchain_str: str) -> "ToolchainConfig":
@@ -235,8 +247,42 @@ class ToolchainConfig(Enum):
         except KeyError:
             raise ValueError(f"Unsupported toolchain configuration: {toolchain_str}")
 
-    def to_str(self):
-        return self.name
+    def get_config_list(self) -> list[str]:
+        for item in self.makefile_command_variables:
+            if item[0] == self:
+                return [
+            f"{key}={value}"
+            for key, value in item[1].items()
+            ]
+
+
+ToolchainConfig.makefile_command_variables = [
+    (ToolchainConfig.GCCOnly, {}),  # No need to override any tools
+    (
+        ToolchainConfig.GNUBinClang,
+        {
+            "CC": "clang",
+        },
+    ),
+    (
+        ToolchainConfig.FullLLVM,
+        {
+            "CC": "clang",
+            "LD": "ld.lld",
+            "AR": "llvm-ar",
+            "NM": "llvm-nm",
+            "OBJCOPY": "llvm-objcopy",
+            "OBJDUMP": "llvm-objdump",
+        },
+    ),
+    (
+        ToolchainConfig.FullLLVMWithIAS,
+        {
+            "LLVM": "1",
+            # "LLVM_IAS": "1", TODO: Maybe?
+        },
+    ),
+]
 
 
 class KernelConfig:
@@ -248,7 +294,9 @@ class KernelConfig:
         self.repo_url = _get_info_element("RepoUrl")
         self.repo_branch = _get_info_element("RepoBranch")
         simplename = _get_info_element("SimpleName", fallback=None)
-        self.anykernel3_directory = _get_info_element("AnyKernel3Directory", fallback=None)
+        self.anykernel3_directory = _get_info_element(
+            "AnyKernel3Directory", fallback=None
+        )
         if simplename:
             self._simple_name = simplename
         else:
@@ -376,7 +424,12 @@ def choose_from_list(choices: list[str]) -> str:
         except ValueError:
             print("Invalid choice. Please enter a number.")
 
-def find_available_compilers(toolchain_directory, kernel_arch, toolchain_config):
+
+def find_available_compilers(
+    toolchain_directory: str,
+    kernel_arch: KernelArch,
+    toolchain_config: ToolchainConfig,
+):
     """
     Find available compilers based on the kernel architecture and toolchain configuration.
 
@@ -386,132 +439,55 @@ def find_available_compilers(toolchain_directory, kernel_arch, toolchain_config)
     - toolchain_config (ToolchainConfig): The toolchain configuration (GCCOnly, FullLLVM, etc.).
 
     Returns:
-    - list[CompilerTest]: A list of available compiler tests.
+    - CompilerType: The selected compiler type.
+    - config_list (list[str]): The list of configuration options for the selected compiler.
+    - triples (str): The target triple for the selected compiler.
     """
-    gcc_prefixes = {
-        KernelArch.x86_64: ["x86_64-linux-gnu-", "x86_64-linux-android-"],
-        KernelArch.arm64: ["aarch64-linux-gnu-", "aarch64-linux-android-"],
-        KernelArch.arm: ["arm-linux-gnueabi-", "arm-linux-androideabi-"],
-        KernelArch.x86: ["i686-linux-gnu-", "i686-linux-android-"],
-    }
+    exe_dir = os.path.join(toolchain_directory, "bin")
+    # Check the toolchain configuration
+    match toolchain_config:
+        case ToolchainConfig.GCCOnly:
+            if popen_impl_test_executable(
+                os.path.join(exe_dir, CompilerType.GCC.toolchain_exe(kernel_arch)),
+                ["--version"],
+            ):
+                return (
+                    CompilerType.GCC,
+                    ToolchainConfig.get_config_list(toolchain_config),
+                    CompilerType.GCC.get_triples(kernel_arch),
+                )
+            elif popen_impl_test_executable(
+                os.path.join(
+                    exe_dir, CompilerType.GCCAndroid.toolchain_exe(kernel_arch)
+                ),
+                ["--version"],
+            ):
+                return (
+                    CompilerType.GCCAndroid,
+                    ToolchainConfig.get_config_list(toolchain_config),
+                    CompilerType.GCCAndroid.get_triples(kernel_arch),
+                )
+        case (
+            ToolchainConfig.GNUBinClang
+            | ToolchainConfig.FullLLVM
+            | ToolchainConfig.FullLLVMWithIAS
+        ):
+            if popen_impl_test_executable(
+                os.path.join(exe_dir, CompilerType.Clang.toolchain_exe(kernel_arch)),
+                ["--version"],
+            ):
+                return (
+                    CompilerType.Clang,
+                    ToolchainConfig.get_config_list(toolchain_config),
+                    CompilerType.Clang.get_triples(kernel_arch),
+                )
 
-    clang_prefixes = {
-        KernelArch.x86_64: "x86_64-linux-gnu-",
-        KernelArch.arm64: "aarch64-linux-gnu-",
-        KernelArch.arm: "arm-linux-gnueabi-",
-        KernelArch.x86: "i686-linux-gnu-",
-    }
+    logging.error(f"Dump: Toolchain config: {toolchain_config}")
+    raise UnImplementedError(f"Unsupported toolchain configuration")
 
-    compilers = []
-
-    # Check the toolchain configuration and create appropriate CompilerTest objects
-    if toolchain_config == ToolchainConfig.FullLLVM:
-        clang_compiler = CompilerTest(
-            exe_path=os.path.join(toolchain_directory, "bin", "clang"),
-            versionRegex=r"(.*?clang version \d+(\.\d+)*).*"
-        )
-        compilers.append(clang_compiler)
-
-    for prefix in gcc_prefixes[kernel_arch]:
-        gcc_compiler = CompilerTest(
-            exe_path=os.path.join(toolchain_directory, "bin", prefix + "gcc"),
-            versionRegex=r"(.*?gcc \(.*\) \d+(\.\d+)*)"
-        )
-        compilers.append(gcc_compiler)
-
-    return compilers
-
-
-def select_compiler(compilers):
-    """
-    Select the first available compiler by testing each one in order.
-
-    Parameters:
-    - compilers (list[CompilerTest]): A list of CompilerTest objects to test.
-
-    Returns:
-    - CompilerTest: The first available compiler, or None if no compiler is found.
-    """
-    for compiler in compilers:
-        if compiler.test_executable():
-            logging.info(f"Selected compiler: {compiler.get_version()}")
-            return compiler
-        else:
-            logging.warning(f"Compiler {compiler.get_path()} not available.")
-    return None
-
-
-def determine_target_triple(compiler, kernel_arch):
-    """
-    Determine the target triple based on the selected compiler and kernel architecture.
-
-    Parameters:
-    - compiler (CompilerTest): The selected compiler.
-    - kernel_arch (KernelArch): The architecture of the kernel.
-
-    Returns:
-    - str: The target triple for cross-compilation, or None if unsupported.
-    """
-    clang_prefixes = {
-        KernelArch.x86_64: "x86_64-linux-gnu-",
-        KernelArch.arm64: "aarch64-linux-gnu-",
-        KernelArch.arm: "arm-linux-gnueabi-",
-        KernelArch.x86: "i686-linux-gnu-",
-    }
-
-    if compiler.get_compiler_type() == CompilerType.Clang:
-        return clang_prefixes[kernel_arch]
-    elif compiler.get_compiler_type() == CompilerType.GCC:
-        return os.path.basename(compiler.get_path())[:-3]  # Strip 'gcc' suffix
-    else:
-        logging.error("Unsupported compiler type.")
-        return None
-
-
-def choose_compiler(toolchain_directory, toolchain_config, kernel_arch):
-    """
-    Choose the appropriate compiler for the build process based on the toolchain configuration
-    and kernel architecture.
-
-    Parameters:
-    - toolchain_directory (str): The path to the toolchain directory.
-    - toolchain_config (ToolchainConfig): The toolchain configuration (e.g., GCCOnly, FullLLVM).
-    - kernel_arch (KernelArch): The architecture of the kernel (e.g., x86_64, arm64).
-
-    Returns:
-    - tuple[CompilerTest, str]: The selected compiler and its target triple, or (None, None) if no compiler is found.
-    """
-    logging.info("Searching for available compilers...")
-
-    try:
-        compilers = find_available_compilers(toolchain_directory, kernel_arch, toolchain_config)
-
-        selected_compiler = select_compiler(compilers)
-        if not selected_compiler:
-            logging.error("No suitable compiler found.")
-            return None, None
-
-        target_triple = determine_target_triple(selected_compiler, kernel_arch)
-        if not target_triple:
-            logging.error("Unable to determine target triple.")
-            return None, None
-
-        return selected_compiler, target_triple
-
-    except UnImplementedError as e:
-        logging.error(f"Unimplemented toolchain configuration: {str(e)}")
-        return None, None
-
-llvm_sets = {
-    "CC": "clang",
-    "LD": "ld.lld",
-    "AR": "llvm-ar",
-    "NM": "llvm-nm",
-    "OBJCOPY": "llvm-objcopy",
-    "OBJDUMP": "llvm-objdump",
-}
 
 from collections import defaultdict, deque
+
 
 def build_dependency_graph(fragments):
     """
@@ -524,7 +500,9 @@ def build_dependency_graph(fragments):
     tuple[defaultdict, defaultdict]: A graph representing dependencies and a dictionary with in-degrees.
     """
     graph = defaultdict(list)  # Adjacency list for graph
-    in_degree = defaultdict(int)  # Track in-degree of each fragment (number of dependencies)
+    in_degree = defaultdict(
+        int
+    )  # Track in-degree of each fragment (number of dependencies)
 
     # Build the graph and in-degree map
     for fragment in fragments:
@@ -541,6 +519,7 @@ def build_dependency_graph(fragments):
                 in_degree[fragment["NamingScheme"]] = 0
 
     return graph, in_degree
+
 
 def topological_sort(fragments):
     """
@@ -559,20 +538,27 @@ def topological_sort(fragments):
     queue = deque([frag for frag in fragments if in_degree[frag["NamingScheme"]] == 0])
 
     while queue:
-        current_fragment = queue.popleft()  # Get a fragment with no remaining dependencies
+        current_fragment = (
+            queue.popleft()
+        )  # Get a fragment with no remaining dependencies
         sorted_fragments.append(current_fragment)
 
         # Reduce the in-degree of dependent fragments
         for dependent in graph[current_fragment["NamingScheme"]]:
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:  # If no more dependencies, add to queue
-                queue.append(next(frag for frag in fragments if frag["NamingScheme"] == dependent))
+                queue.append(
+                    next(
+                        frag for frag in fragments if frag["NamingScheme"] == dependent
+                    )
+                )
 
     # Check if there's a cycle (unresolved dependencies)
     if len(sorted_fragments) != len(fragments):
         raise RuntimeError("Dependency cycle detected in fragments")
 
     return sorted_fragments
+
 
 def ask_yesno(question, allow_empty=False):
     """
@@ -585,7 +571,12 @@ def ask_yesno(question, allow_empty=False):
     bool: True if the user answered 'yes', False otherwise.
     """
     while True:
-        response = input(question + " (yes/no): ").lower()
+        try:
+            response = input(question + " (yes/no): ").lower()
+        except KeyboardInterrupt:
+            print("\nAborting...")
+            sys.exit(1)
+
         if allow_empty and response == "":
             return True
         elif response == "yes" or response == "y":
@@ -594,6 +585,7 @@ def ask_yesno(question, allow_empty=False):
             return False
         else:
             print("Invalid response. Please answer 'yes' or 'no'.")
+
 
 def apply_fragments(selectedKernelConfig, device_choice):
     """
@@ -613,7 +605,8 @@ def apply_fragments(selectedKernelConfig, device_choice):
 
     # Filter fragments that are applicable to the current device
     applicable_fragments = [
-        fragment for fragment in selectedKernelConfig.config_fragments
+        fragment
+        for fragment in selectedKernelConfig.config_fragments
         if fragment["TargetDevice"] is None or device_choice in fragment["TargetDevice"]
     ]
 
@@ -625,20 +618,29 @@ def apply_fragments(selectedKernelConfig, device_choice):
         fragment_name = fragment["NamingScheme"].replace("{device}", device_choice)
 
         # Check if any of this fragment's dependencies were skipped
-        if fragment["DependsOn"] is not None and any(dep in skipped_fragments for dep in fragment["DependsOn"]):
-            logging.info(f"Skipping fragment '{fragment_name}' because a dependency was not applied.")
+        if fragment["DependsOn"] is not None and any(
+            dep in skipped_fragments for dep in fragment["DependsOn"]
+        ):
+            logging.info(
+                f"Skipping fragment '{fragment_name}' because a dependency was not applied."
+            )
             skipped_fragments.add(fragment_name)  # Mark as skipped
             continue
 
         # If the fragment is default-enabled, apply it automatically
         if fragment["Default"]:
-            logging.info(f"Applying default-enabled fragment: {fragment_name} ({fragment['Description']})")
+            logging.info(
+                f"Applying default-enabled fragment: {fragment_name} ({fragment['Description']})"
+            )
             defconfig_list.append(fragment_name)
             applied_fragments.append(fragment_name)
         else:
             # Ask the user whether to apply the fragment
             # And handle the user's answer
-            if ask_yesno(f"Apply fragment '{fragment['Description']}' ({fragment_name})?", allow_empty=True):
+            if ask_yesno(
+                f"Apply fragment '{fragment['Description']}' ({fragment_name})?",
+                allow_empty=True,
+            ):
                 logging.info(f"Applying user-selected fragment: {fragment_name}")
                 defconfig_list.append(fragment_name)
                 applied_fragments.append(fragment_name)
@@ -647,7 +649,6 @@ def apply_fragments(selectedKernelConfig, device_choice):
                 skipped_fragments.add(fragment_name)  # Mark as skipped
 
     return defconfig_list
-
 
 
 def main():
@@ -737,8 +738,8 @@ If no, provide a directory with the kernel clone, else just hit enter: """
 
     defconfig_list = [
         selectedKernelConfig.namingscheme.replace("{device}", device_choice)
-    ] 
-    
+    ]
+
     # Apply fragments based on dependencies, with user interaction
     try:
         defconfig_list += apply_fragments(selectedKernelConfig, device_choice)
@@ -746,13 +747,15 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.error(f"Error applying fragments: {str(e)}")
         return
 
-    selectedCompiler, targetTriple = choose_compiler(
-        toolchainDirectory,
-        selectedKernelConfig.toolchain_config,
-        selectedKernelConfig.kernel_arch,
-    )
-
-    if targetTriple is None:
+    try:
+        compilerType, arglist, targetTriple = find_available_compilers(
+            toolchainDirectory,
+            selectedKernelConfig.kernel_arch,
+            selectedKernelConfig.toolchain_config,
+        )
+        logging.info(f'toolchain version: {compilerType.toolchain_version(os.path.join(toolchainDirectory, 'bin'), selectedKernelConfig.kernel_arch)}')
+    except UnImplementedError as e:
+        logging.error(f"Error finding available compilers: {str(e)}")
         return
 
     # Init submodules, if any.
@@ -782,10 +785,10 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         "ARCH=" + arch,
         "O=" + OutDirectory,
         "CROSS_COMPILE=" + targetTriple,
+        "CROSS_COMPILE_ARM32=arm-linux-gnueabi",
         f"-j{jobsCount}",
     ]
-    if selectedCompiler.get_compiler_type() == CompilerType.Clang:
-        make_common += [f"{x}={y}" for x, y in llvm_sets.items()]
+    make_common += arglist
     make_defconfig += make_common
     make_defconfig += defconfig_list
 
@@ -847,6 +850,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.info("Skipping AnyKernel3 zip creation")
     logging.info("Kernel version: " + kver)
     logging.info("Elapsed time: " + str(t.total_seconds()) + " seconds")
+
 
 if __name__ == "__main__":
     main()
