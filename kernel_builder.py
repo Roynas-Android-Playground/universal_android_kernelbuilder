@@ -21,10 +21,10 @@ logging.basicConfig(
 
 class PopenImpl:
     class DebugMode(Enum):
-        Off = (0,)
-        Debug = (1,)
-        Debug_OutputToStderr = (2,)
-        Debug_OutputToFile = (3,)
+        Off = 0
+        Debug = 1
+        Debug_OutputToStderr = 2
+        Debug_OutputToFile = 3
 
         def isDebug(self) -> bool:
             return self != self.Off
@@ -225,8 +225,8 @@ class KernelType(Enum):
 
 
 class ToolchainConfig(Enum):
-    GCCOnly = ("GCCOnly",)
-    GNUBinClang = ("GNUBinClang",)
+    GCCOnly = "GCCOnly"
+    GNUBinClang = "GNUBinClang"
     FullLLVM = "FullLLVM"
 
     @classmethod
