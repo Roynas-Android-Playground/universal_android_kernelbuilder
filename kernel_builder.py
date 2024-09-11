@@ -248,6 +248,7 @@ class KernelConfig:
         self.repo_url = _get_info_element("RepoUrl")
         self.repo_branch = _get_info_element("RepoBranch")
         simplename = _get_info_element("SimpleName", fallback=None)
+        self.anykernel3_directory = _get_info_element("AnyKernel3Directory", fallback=None)
         if simplename:
             self._simple_name = simplename
         else:
@@ -573,6 +574,27 @@ def topological_sort(fragments):
 
     return sorted_fragments
 
+def ask_yesno(question, allow_empty=False):
+    """
+    Ask the user a yes/no question and return their response as a boolean.
+
+    Parameters:
+    question (str): The question to ask the user.
+
+    Returns:
+    bool: True if the user answered 'yes', False otherwise.
+    """
+    while True:
+        response = input(question + " (yes/no): ").lower()
+        if allow_empty and response == "":
+            return True
+        elif response == "yes" or response == "y":
+            return True
+        elif response == "no" or response == "n":
+            return False
+        else:
+            print("Invalid response. Please answer 'yes' or 'no'.")
+
 def apply_fragments(selectedKernelConfig, device_choice):
     """
     Apply the kernel configuration fragments in the correct order of dependency resolution,
@@ -615,21 +637,13 @@ def apply_fragments(selectedKernelConfig, device_choice):
             applied_fragments.append(fragment_name)
         else:
             # Ask the user whether to apply the fragment
-            valid_answers = ["y", "n", ""]
-            yes_answers = ["y", ""]
-            answer = input(f"Apply fragment '{fragment['Description']}' ({fragment_name})? (Y/n): ").lower()
-
-            # Handle the user's answer
-            if answer in valid_answers:
-                if answer in yes_answers:
-                    logging.info(f"Applying user-selected fragment: {fragment_name}")
-                    defconfig_list.append(fragment_name)
-                    applied_fragments.append(fragment_name)
-                else:
-                    logging.info(f"Skipping fragment: {fragment_name}")
-                    skipped_fragments.add(fragment_name)  # Mark as skipped
+            # And handle the user's answer
+            if ask_yesno(f"Apply fragment '{fragment['Description']}' ({fragment_name})?", allow_empty=True):
+                logging.info(f"Applying user-selected fragment: {fragment_name}")
+                defconfig_list.append(fragment_name)
+                applied_fragments.append(fragment_name)
             else:
-                logging.warning(f"Invalid input. Skipping fragment: {fragment_name}")
+                logging.info(f"Skipping fragment: {fragment_name}")
                 skipped_fragments.add(fragment_name)  # Mark as skipped
 
     return defconfig_list
@@ -656,7 +670,6 @@ def main():
 
     # Load directories config
     toolchainDirectory = mainConfig.get("directory", "Toolchain")
-    AnyKernelDirectory = mainConfig.get("directory", "AnyKernel")
     OutDirectory = mainConfig.get("directory", "Out")
 
     # Load jobs count config
@@ -758,10 +771,10 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     newEnv = os.environ.copy()
     newEnv["PATH"] = tcPath + ":" + newEnv["PATH"]
 
-    if os.path.exists(OutDirectory) and not False:
+    if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
         logging.info("Make clean...")
         shutil.rmtree(OutDirectory)
-    os.mkdir(OutDirectory)
+        os.mkdir(OutDirectory)
 
     make_defconfig = []
     make_common = [
@@ -798,38 +811,42 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     with open(os.path.join(OutDirectory, "include", "generated", "utsrelease.h")) as f:
         kver = match_and_get_first(r'"([^"]+)"', f.read())
 
-    shutil.copyfile(
-        os.path.join(OutDirectory, "arch", arch, "boot", type),
-        os.path.join(AnyKernelDirectory, type),
-    )
-    zipname = (selectedKernelConfig.dest_dir() + "_{}_{}.zip").format(
-        device_choice, datetime.today().strftime("%Y-%m-%d")
-    )
-    os.chdir(AnyKernelDirectory)
-    zip_files(
-        zipname,
-        [
-            type,
-            "META-INF/com/google/android/update-binary",
-            "META-INF/com/google/android/updater-script",
-            "tools/ak3-core.sh",
-            "tools/busybox",
-            "tools/magiskboot",
-            "anykernel.sh",
-            "version",
-        ],
-    )
-    newZipName = os.path.join(os.getcwd(), "..", zipname)
-    try:
-        os.remove(newZipName)
-    except:
-        pass
-    shutil.move(zipname, newZipName)
-    os.chdir("..")
-    logging.info("Kernel zip created:", newZipName)
-    logging.info("Kernel version:", kver)
-    logging.info("Elapsed time:", str(t.total_seconds()) + " seconds")
+    if selectedKernelConfig.anykernel3_directory:
+        AnyKernelDirectory = selectedKernelConfig.anykernel3_directory
 
+        shutil.copyfile(
+            os.path.join(OutDirectory, "arch", arch, "boot", type),
+            os.path.join(AnyKernelDirectory, type),
+        )
+        zipname = (selectedKernelConfig.dest_dir() + "_{}_{}.zip").format(
+            device_choice, datetime.today().strftime("%Y-%m-%d")
+        )
+        os.chdir(AnyKernelDirectory)
+        zip_files(
+            zipname,
+            [
+                type,
+                "META-INF/com/google/android/update-binary",
+                "META-INF/com/google/android/updater-script",
+                "tools/ak3-core.sh",
+                "tools/busybox",
+                "tools/magiskboot",
+                "anykernel.sh",
+                "version",
+            ],
+        )
+        newZipName = os.path.join(os.getcwd(), "..", zipname)
+        try:
+            os.remove(newZipName)
+        except:
+            pass
+        shutil.move(zipname, newZipName)
+        os.chdir("..")
+        logging.info("Kernel zip created:", newZipName)
+    else:
+        logging.info("Skipping AnyKernel3 zip creation")
+    logging.info("Kernel version: " + kver)
+    logging.info("Elapsed time: " + str(t.total_seconds()) + " seconds")
 
 if __name__ == "__main__":
     main()

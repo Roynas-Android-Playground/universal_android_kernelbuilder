@@ -24,6 +24,10 @@ KernelType=Image.gz-dtb
 # Toolchain support of the kernel. Supported values are: GCCOnly, GNUBinClang, FullLLVM
 ToolchainConfig=FullLLVM
 
+# AnyKernel3 directory in the kernel relative to the kernel root.
+# If none specified, kernel zip creation is skipped.
+AnyKernel3Directory=path/to/anyKernel3
+
 [defconfig]
 # NamingScheme defines the naming pattern for the defconfig file.
 # The {device} placeholder will be replaced by the actual device name.
