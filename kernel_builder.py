@@ -23,8 +23,7 @@ class PopenImpl:
     class DebugMode(Enum):
         Off = 0
         Debug = 1
-        Debug_OutputToStderr = 2
-        Debug_OutputToFile = 3
+        Debug_OutputToFile = 2
 
         def isDebug(self) -> bool:
             return self != self.Off
@@ -55,10 +54,7 @@ class PopenImpl:
         def write_logs(out, err, failed=False):
             out = out.decode(UTF8Codec)
             err = err.decode(UTF8Codec)
-            if self.debugmode == self.DebugMode.Debug_OutputToStderr and failed:
-                logging.error("Failed, printing process stderr output to stderr...")
-                print(err, file=sys.stderr)
-            elif self.debugmode == self.DebugMode.Debug_OutputToFile:
+            if self.debugmode == self.DebugMode.Debug_OutputToFile:
                 stdout_log = str(s.pid) + "_stdout.log"
                 stderr_log = str(s.pid) + "_stderr.log"
                 with open(stdout_log, "w") as f:
@@ -66,6 +62,9 @@ class PopenImpl:
                 with open(stderr_log, "w") as f:
                     f.write(err)
                 logging.info(f"Output log files: {stdout_log}, {stderr_log}")
+            elif failed:
+                logging.error("Failed, printing process stderr output to stderr...")
+                print(err, file=sys.stderr)
 
         if s.returncode != 0:
             write_logs(out, err, failed=True)
@@ -649,13 +648,8 @@ def main():
     debug_popen_impl_writefile = mainConfig.getboolean(
         "popen_impl", "WriteLogFiles", fallback=False
     )
-    debug_popen_impl_showstderr = mainConfig.getboolean(
-        "popen_impl", "ShowStdErrToConsole", fallback=False
-    )
     if debug_popen_impl:
-        if debug_popen_impl_showstderr:
-            popen_impl_set_debugmode(PopenImpl.DebugMode.Debug_OutputToStderr)
-        elif debug_popen_impl_writefile:
+        if debug_popen_impl_writefile:
             popen_impl_set_debugmode(PopenImpl.DebugMode.Debug_OutputToFile)
         else:
             popen_impl_set_debugmode(PopenImpl.DebugMode.Debug)
