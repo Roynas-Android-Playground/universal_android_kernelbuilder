@@ -845,7 +845,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             pass
         shutil.move(zipname, newZipName)
         os.chdir("..")
-        logging.info("Kernel zip created:", newZipName)
+        logging.info("Kernel zip created: " + newZipName)
     else:
         logging.info("Skipping AnyKernel3 zip creation")
     logging.info("Kernel version: " + kver)
