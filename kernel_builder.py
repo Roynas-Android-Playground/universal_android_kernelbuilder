@@ -294,11 +294,6 @@ class KernelConfig:
         self.repo_url = _get_info_element("RepoUrl")
         self.repo_branch = _get_info_element("RepoBranch")
         simplename = _get_info_element("SimpleName", fallback=None)
-        self.anykernel3_directory = _get_info_element(
-            "AnyKernel3Directory", fallback=None
-        )
-        if self.anykernel3_directory:
-            self.anykernel3_directory = Path(self.anykernel3_directory)
         if simplename:
             self._simple_name = simplename
         else:
@@ -319,6 +314,16 @@ class KernelConfig:
 
         self.namingscheme = _get_defconfig_element("NamingScheme")
         self.devices = _get_defconfig_element("Devices").split(",")
+
+    def _parse_anykernel3(self):
+        def _get_anykernel3_element(key: str, **kwargs) -> str:
+            return self.config.get("anykernel3", key, **kwargs)
+        
+        directory = _get_anykernel3_element("Directory")
+        if directory:
+            self.anykernel3_directory = Path(directory)
+            additionalFiles = _get_anykernel3_element("AdditionalFiles", fallback=None)
+            self.anykernel3_addfiles = [Path(file) for file in additionalFiles.split(",")] if additionalFiles else []
 
     def _parse_config_fragments(self):
         self.config_fragments = []
@@ -359,6 +364,10 @@ class KernelConfig:
         self._parse_info()
         self._parse_defconfig()
         self._parse_config_fragments()
+        try:
+            self._parse_anykernel3()
+        except configparser.NoSectionError:
+            logging.info("No anykernel3 section found")
         logging.debug(f"Config parsed successfully: {self.name}")
 
     def clone(self):
@@ -825,9 +834,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             device_choice, datetime.today().strftime("%Y-%m-%d")
         )
         os.chdir(AnyKernelDirectory)
-        zip_files(
-            zipname,
-            [
+        zippinglist = [
                 type,
                 "META-INF/com/google/android/update-binary",
                 "META-INF/com/google/android/updater-script",
@@ -835,8 +842,13 @@ If no, provide a directory with the kernel clone, else just hit enter: """
                 "tools/busybox",
                 "tools/magiskboot",
                 "anykernel.sh",
-                "version",
-            ],
+            ]
+        if len(selectedKernelConfig.anykernel3_addfiles) != 0:
+            zippinglist += selectedKernelConfig.anykernel3_addfiles
+            logging.info(f'Adding additional files: {[str(x) for x in selectedKernelConfig.anykernel3_addfiles]}')
+        zip_files(
+            zipname,
+            zippinglist
         )
         newZipName = Path(os.getcwd()) / ".." / zipname
         try:

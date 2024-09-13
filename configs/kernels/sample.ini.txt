@@ -28,9 +28,22 @@ KernelType=Image.gz-dtb
 # FullLLVMWithIAS: Same as above, but LLVM=1 and LLVM_IAS=1 is supported by the kernel.
 ToolchainConfig=FullLLVM
 
+[anykernel3]
+
 # AnyKernel3 directory in the kernel relative to the kernel root.
 # If none specified, kernel zip creation is skipped.
-AnyKernel3Directory=path/to/anyKernel3
+Directory=path/to/anyKernel3
+
+# Additional files to include to the zip.
+# Default list is:
+# META-INF/com/google/android/update-binary
+# META-INF/com/google/android/updater-script
+# tools/ak3-core.sh
+# tools/busybox
+# tools/magiskboot
+# anykernel.sh
+# And the kernel binary.
+AdditionalFiles=version
 
 [defconfig]
 # NamingScheme defines the naming pattern for the defconfig file.
