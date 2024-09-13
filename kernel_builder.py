@@ -8,13 +8,13 @@ import logging
 import zipfile
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.DEBUG,
     handlers=[logging.StreamHandler()],
     format="%(asctime)s - %(filename)s:%(lineno)-3d - %(levelname)-8s: %(message)s",
 )
-
 
 class PopenImpl:
     class DebugMode(Enum):
@@ -75,7 +75,7 @@ class PopenImpl:
     def set_debugmode(self, mode: DebugMode) -> None:
         self.debugmode = mode
 
-    def test_executable(self, path: str, args: list[str] = []) -> bool:
+    def test_executable(self, path: Path, args: list[str] = []) -> bool:
         """
         Test if an executable file exists and can be executed with the provided arguments.
 
@@ -87,9 +87,9 @@ class PopenImpl:
         bool: True if the executable exists and can be executed with the provided arguments, False otherwise.
         """
         try:
-            self.run([path] + args)
+            self.run([path.as_posix()] + args)
             return True
-        except FileNotFoundError | RuntimeError as e:
+        except (FileNotFoundError, RuntimeError) as e:
             logging.warning(f"Execution of {path} with args: {args} failed: {str(e)}")
             return False
 
@@ -201,9 +201,9 @@ class CompilerType(Enum):
                 return match_and_get_first(self.clang_version_regex, output)
         raise ValueError(f"Unsupported compiler type: {self}")
 
-    def toolchain_version(self, tcPath: str, arch: KernelArch) -> str:
+    def toolchain_version(self, tcPath: Path, arch: KernelArch) -> str:
         out, _ = popen_impl(
-            [os.path.join(tcPath, self.toolchain_exe(arch)), "--version"]
+            [str(tcPath / self.toolchain_exe(arch)), "--version"]
         )
         return self.extract_version(out)
 
@@ -297,6 +297,8 @@ class KernelConfig:
         self.anykernel3_directory = _get_info_element(
             "AnyKernel3Directory", fallback=None
         )
+        if self.anykernel3_directory:
+            self.anykernel3_directory = Path(self.anykernel3_directory)
         if simplename:
             self._simple_name = simplename
         else:
@@ -336,7 +338,7 @@ class KernelConfig:
                 }
                 self.config_fragments.append(fragment)
 
-    def __init__(self, config_file: str) -> None:
+    def __init__(self, config_file: Path) -> None:
         """
         Initialize a KernelConfig object with the given configuration file.
 
@@ -352,9 +354,7 @@ class KernelConfig:
         """
         self.config_file = config_file
         self.config = configparser.ConfigParser()
-        assert os.path.isfile(
-            self.config_file
-        ), f"Kernelconfig file not found: {self.config_file}"
+        assert self.config_file.is_file(), f"Kernelconfig file not found: {self.config_file}"
         self.config.read(self.config_file)
         self._parse_info()
         self._parse_defconfig()
@@ -402,7 +402,7 @@ def check_file(filename: str, existFn):
 
 def zip_files(zipfilename: str, files: list[str]):
     logging.info(
-        f"Zipping {len(files)} files to {os.path.relpath(os.getcwd(), zipfilename)}..."
+        f"Zipping {len(files)} files to {zipfilename}..."
     )
     with zipfile.ZipFile(zipfilename, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for f in files:
@@ -426,7 +426,7 @@ def choose_from_list(choices: list[str]) -> str:
 
 
 def find_available_compilers(
-    toolchain_directory: str,
+    toolchain_directory: Path,
     kernel_arch: KernelArch,
     toolchain_config: ToolchainConfig,
 ):
@@ -434,7 +434,7 @@ def find_available_compilers(
     Find available compilers based on the kernel architecture and toolchain configuration.
 
     Parameters:
-    - toolchain_directory (str): The path to the toolchain directory.
+    - toolchain_directory (Path): The path to the toolchain directory.
     - kernel_arch (KernelArch): The architecture of the kernel.
     - toolchain_config (ToolchainConfig): The toolchain configuration (GCCOnly, FullLLVM, etc.).
 
@@ -443,45 +443,35 @@ def find_available_compilers(
     - config_list (list[str]): The list of configuration options for the selected compiler.
     - triples (str): The target triple for the selected compiler.
     """
-    exe_dir = os.path.join(toolchain_directory, "bin")
+    exe_dir = toolchain_directory / "bin"
+    Ctype : CompilerType = None
+    versionArgv = ['--version']
+
     # Check the toolchain configuration
     match toolchain_config:
         case ToolchainConfig.GCCOnly:
             if popen_impl_test_executable(
-                os.path.join(exe_dir, CompilerType.GCC.toolchain_exe(kernel_arch)),
-                ["--version"],
+                exe_dir / CompilerType.GCC.toolchain_exe(kernel_arch),
+                versionArgv,
             ):
-                return (
-                    CompilerType.GCC,
-                    ToolchainConfig.get_config_list(toolchain_config),
-                    CompilerType.GCC.get_triples(kernel_arch),
-                )
+                Ctype = CompilerType.GCC
             elif popen_impl_test_executable(
-                os.path.join(
-                    exe_dir, CompilerType.GCCAndroid.toolchain_exe(kernel_arch)
-                ),
-                ["--version"],
+                exe_dir / CompilerType.GCCAndroid.toolchain_exe(kernel_arch),
+                versionArgv,
             ):
-                return (
-                    CompilerType.GCCAndroid,
-                    ToolchainConfig.get_config_list(toolchain_config),
-                    CompilerType.GCCAndroid.get_triples(kernel_arch),
-                )
+                Ctype = CompilerType.GCCAndroid
         case (
             ToolchainConfig.GNUBinClang
             | ToolchainConfig.FullLLVM
             | ToolchainConfig.FullLLVMWithIAS
         ):
             if popen_impl_test_executable(
-                os.path.join(exe_dir, CompilerType.Clang.toolchain_exe(kernel_arch)),
-                ["--version"],
+                exe_dir / CompilerType.Clang.toolchain_exe(kernel_arch), versionArgv,
             ):
-                return (
-                    CompilerType.Clang,
-                    ToolchainConfig.get_config_list(toolchain_config),
-                    CompilerType.Clang.get_triples(kernel_arch),
-                )
-
+                Ctype = CompilerType.Clang
+    
+    if Ctype:
+        return Ctype, ToolchainConfig.get_config_list(toolchain_config), Ctype.get_triples(kernel_arch)
     logging.error(f"Dump: Toolchain config: {toolchain_config}")
     raise UnImplementedError(f"Unsupported toolchain configuration")
 
@@ -653,8 +643,8 @@ def apply_fragments(selectedKernelConfig, device_choice):
 
 def main():
     # Parse the main ini file.
-    iniFile = os.path.join("configs", "kernelbuilder.ini")
-    assert os.path.isfile(iniFile), "kernelbuilder.ini not found"
+    iniFile = Path() / "configs" / "kernelbuilder.ini"
+    assert iniFile.is_file(), "kernelbuilder.ini not found"
     mainConfig = configparser.ConfigParser()
     mainConfig.read(iniFile)
 
@@ -670,13 +660,13 @@ def main():
             popen_impl_set_debugmode(PopenImpl.DebugMode.Debug)
 
     # Load directories config
-    toolchainDirectory = mainConfig.get("directory", "Toolchain")
-    OutDirectory = mainConfig.get("directory", "Out")
+    toolchainDirectory = Path(mainConfig.get("directory", "Toolchain"))
+    OutDirectory = Path(mainConfig.get("directory", "Out"))
 
     # Load jobs count config
-    JobCountFormula = mainConfig.get("build", "JobsCountFormula", fallback="x")
+    JobCountFormula = mainConfig.get("build", "JobsCountFormula", fallback=None)
     basicMathRegex = re.compile(r"^x(\W(\+|-|\/|\*)\W\d+)?$")
-    if not basicMathRegex.match(JobCountFormula):
+    if JobCountFormula is None or not basicMathRegex.match(JobCountFormula):
         logging.warning("Invalid JobsCountFormula (Need a lvalue x and rvalue)")
         JobCountFormula = "x"
     jobsCount = eval(JobCountFormula, {"x": os.cpu_count()})
@@ -685,12 +675,12 @@ def main():
     )
 
     # Parse the kernel specific ini files.
-    kernelConfigDir = os.path.join("configs", "kernels", "")
-    kernelConfigFiles = [f for f in os.listdir(kernelConfigDir) if f.endswith(".ini")]
+    kernelConfigDir = Path() / "configs" / "kernels"
+    kernelConfigFiles = [f for f in kernelConfigDir.iterdir() if f.name.endswith(".ini")]
     kernelConfigs = []
     for kernelConfigFile in kernelConfigFiles:
         try:
-            kernelConfig = KernelConfig(os.path.join(kernelConfigDir, kernelConfigFile))
+            kernelConfig = KernelConfig(kernelConfigFile)
         except (AssertionError, configparser.Error) as e:
             logging.error(f"Error parsing {kernelConfigFile}: {e}")
             continue
@@ -753,7 +743,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             selectedKernelConfig.kernel_arch,
             selectedKernelConfig.toolchain_config,
         )
-        logging.info(f'toolchain version: {compilerType.toolchain_version(os.path.join(toolchainDirectory, 'bin'), selectedKernelConfig.kernel_arch)}')
+        logging.info(f'toolchain version: {compilerType.toolchain_version(toolchainDirectory / 'bin', selectedKernelConfig.kernel_arch)}')
     except UnImplementedError as e:
         logging.error(f"Error finding available compilers: {str(e)}")
         return
@@ -770,9 +760,9 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     type = selectedKernelConfig.kernel_type.to_str()
 
     # Add toolchain in PATH environment variable
-    tcPath = os.path.join(os.getcwd(), toolchainDirectory, "bin")
+    tcPath = Path(os.getcwd()) / toolchainDirectory / "bin"
     newEnv = os.environ.copy()
-    newEnv["PATH"] = tcPath + ":" + newEnv["PATH"]
+    newEnv["PATH"] = tcPath.as_posix() + ":" + newEnv["PATH"]
 
     if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
         logging.info("Make clean...")
@@ -783,7 +773,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     make_common = [
         "make",
         "ARCH=" + arch,
-        "O=" + OutDirectory,
+        "O=" + OutDirectory.as_posix(),
         "CROSS_COMPILE=" + targetTriple,
         "CROSS_COMPILE_ARM32=arm-linux-gnueabi",
         f"-j{jobsCount}",
@@ -811,15 +801,15 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         return
     t = datetime.now() - t
 
-    with open(os.path.join(OutDirectory, "include", "generated", "utsrelease.h")) as f:
+    with open(OutDirectory / "include" / "generated" / "utsrelease.h") as f:
         kver = match_and_get_first(r'"([^"]+)"', f.read())
 
     if selectedKernelConfig.anykernel3_directory:
         AnyKernelDirectory = selectedKernelConfig.anykernel3_directory
 
         shutil.copyfile(
-            os.path.join(OutDirectory, "arch", arch, "boot", type),
-            os.path.join(AnyKernelDirectory, type),
+            OutDirectory / "arch" / arch / "boot" / type,
+            AnyKernelDirectory / type,
         )
         zipname = (selectedKernelConfig.simple_name() + "_{}_{}.zip").format(
             device_choice, datetime.today().strftime("%Y-%m-%d")
@@ -838,14 +828,14 @@ If no, provide a directory with the kernel clone, else just hit enter: """
                 "version",
             ],
         )
-        newZipName = os.path.join(os.getcwd(), "..", zipname)
+        newZipName = Path(os.getcwd()) / ".." / zipname
         try:
-            os.remove(newZipName)
+            newZipName.unlink()
         except:
             pass
         shutil.move(zipname, newZipName)
         os.chdir("..")
-        logging.info("Kernel zip created: " + newZipName)
+        logging.info("Kernel zip created: " + str(newZipName.resolve()))
     else:
         logging.info("Skipping AnyKernel3 zip creation")
     logging.info("Kernel version: " + kver)
