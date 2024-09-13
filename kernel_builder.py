@@ -674,6 +674,9 @@ def main():
         f"Calculated JobsCount: {jobsCount} from '{JobCountFormula}' where x is {os.cpu_count()}"
     )
 
+    hostString = mainConfig.get("build", "HostString", fallback=None)
+    userString = mainConfig.get("build", "UserString", fallback=None)
+
     # Parse the kernel specific ini files.
     kernelConfigDir = Path() / "configs" / "kernels"
     kernelConfigFiles = [f for f in kernelConfigDir.iterdir() if f.name.endswith(".ini")]
@@ -764,6 +767,13 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     newEnv = os.environ.copy()
     newEnv["PATH"] = tcPath.as_posix() + ":" + newEnv["PATH"]
 
+    # Append custom strings in the make command
+    if hostString:
+        newEnv['KBUILD_HOST'] = hostString
+    if userString:
+        newEnv['KBUILD_USER'] = userString
+
+    # Clean the Out directory if it exists, but ask before.
     if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
         logging.info("Make clean...")
         shutil.rmtree(OutDirectory)
