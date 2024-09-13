@@ -778,9 +778,9 @@ If no, provide a directory with the kernel clone, else just hit enter: """
 
     # Append custom strings in the make command
     if hostString:
-        newEnv['KBUILD_HOST'] = hostString
+        newEnv['KBUILD_BUILD_HOST'] = hostString
     if userString:
-        newEnv['KBUILD_USER'] = userString
+        newEnv['KBUILD_BUILD_USER'] = userString
 
     # Clean the Out directory if it exists, but ask before.
     if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
