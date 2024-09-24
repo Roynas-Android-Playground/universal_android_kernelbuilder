@@ -755,7 +755,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             selectedKernelConfig.kernel_arch,
             selectedKernelConfig.toolchain_config,
         )
-        logging.info(f'toolchain version: {compilerType.toolchain_version(toolchainDirectory / 'bin', selectedKernelConfig.kernel_arch)}')
+        logging.info(f"toolchain version: {compilerType.toolchain_version(toolchainDirectory / 'bin', selectedKernelConfig.kernel_arch)}")
     except UnImplementedError as e:
         logging.error(f"Error finding available compilers: {str(e)}")
         return
