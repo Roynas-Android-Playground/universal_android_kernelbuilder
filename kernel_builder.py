@@ -5,6 +5,7 @@ import shutil
 import sys
 import re
 import logging
+import time
 import zipfile
 from datetime import datetime
 from enum import Enum
@@ -35,6 +36,7 @@ class PopenImpl:
         Parameters:
         command (list[str]): The command to be executed.
         **kwargs: Additional keyword arguments for subprocess.Popen.
+        timed_output (bool) in **kwargs: If True, the command output is shown.
 
         Raises:
         RuntimeError: If the command execution fails.
@@ -46,10 +48,44 @@ class PopenImpl:
         if self.debugmode.isDebug():
             logging.debug("Executing command: %s", " ".join(command))
 
+        use_timed_output = kwargs.get('timed_output', None)
+        if use_timed_output:
+            kwargs.pop('timed_output')
+        
         s = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
         )
-        out, err = s.communicate()
+
+        if use_timed_output:
+            # Initialize variables to store the output
+            out = []
+            err = []
+
+            start = datetime.now()
+            # Read stdout in real-time with delay and carriage return
+            while True:
+                # Read a line from stdout
+                stdout_line = s.stdout.readline()
+                ts = (datetime.now() - start).total_seconds()
+                if stdout_line and round(ts) % 5 == 0:
+                    print(
+                        f"\r\033[K[{ts}s] {stdout_line.strip()}", end="", flush=True
+                    )  # Print the stdout line with carriage return
+                    out.append(stdout_line)  # Collect the stdout output
+
+                # If the process is finished and stdout is empty, break the loop
+                if s.poll() is not None and stdout_line == "":
+                    break
+        
+            remaining_out, remaining_err = s.communicate()
+
+            if remaining_out:
+                out.append(remaining_out)
+            if remaining_err:
+                err.append(remaining_err)
+        else:
+            out, err = s.communicate()
+
 
         def write_logs(out, err, failed=False):
             if self.debugmode == self.DebugMode.Debug_OutputToFile:
@@ -299,7 +335,7 @@ class KernelConfig:
         if self.envMap:
             self.envMap = {
                 k.strip(): v.strip()
-                for k, v in (item.split("=") for item in self.envMap.split(','))
+                for k, v in (item.split("=") for item in self.envMap.split(","))
             }
         try:
             self.kernel_arch = KernelArch.from_str(_get_info_element("KernelArch"))
@@ -882,7 +918,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.info("Make defconfig...")
         popen_impl(make_defconfig, env=newEnv)
         logging.info("Make kernel...")
-        popen_impl(make_kernel, env=newEnv)
+        popen_impl(make_kernel, env=newEnv, timed_output=True)
         logging.info("Done")
     except RuntimeError as e:
         # If these failed, then goodbye.
