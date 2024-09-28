@@ -18,6 +18,42 @@ logging.basicConfig(
 )
 
 
+class DiagnoseLevel(Enum):
+    Error = "err"
+    Warning = "warning"
+    Note = "note"
+
+    @classmethod
+    def from_str(cls, s : str):
+        return cls[s.capitalize()]
+
+
+diagnose_re = re.compile(
+    r"([\/\w\.-]+):(\d+):(\d+):\s+(warning|error|note):\s+([\w '\"()]+)\s(\[(-[\w-]+)\])?")
+def parse_diagnose_msg(line: str) -> tuple[int, int, DiagnoseLevel, str, str]:
+    matches = diagnose_re.match(line)
+    if matches:
+        try:
+            file_path = matches.group(1)
+            line_number = int(matches.group(2))
+            column_number = int(matches.group(3))
+            message_type = DiagnoseLevel.from_str(matches.group(4))
+            message = matches.group(5)
+            warning_code = matches.group(7) if matches.group(7) else "(No warning code)"
+            return (
+                file_path,
+                line_number,
+                column_number,
+                message_type,
+                message,
+                warning_code,
+            )
+        except (ValueError, KeyError) as e:
+            logging.error("Error parsing diagnose message: %s", str(e))
+
+    return None, None, None, None, None, None
+
+
 class PopenImpl:
     class DebugMode(Enum):
         Off = 0
@@ -48,10 +84,10 @@ class PopenImpl:
         if self.debugmode.isDebug():
             logging.debug("Executing command: %s", " ".join(command))
 
-        use_timed_output = kwargs.get('timed_output', None)
+        use_timed_output = kwargs.get("timed_output", None)
         if use_timed_output:
-            kwargs.pop('timed_output')
-        
+            kwargs.pop("timed_output")
+
         s = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
         )
@@ -77,7 +113,7 @@ class PopenImpl:
                 # If the process is finished and stdout is empty, break the loop
                 if s.poll() is not None and stdout_line == "":
                     break
-            
+
             print()
             remaining_out, remaining_err = s.communicate()
 
@@ -85,27 +121,44 @@ class PopenImpl:
                 out.append(remaining_out)
             if remaining_err:
                 err.append(remaining_err)
-            out, err = ''.join(out), ''.join(err)
+            out, err = "".join(out), "".join(err)
         else:
             out, err = s.communicate()
-
+        
+        EXTENDED_DIAGNOSIS = True
+        if EXTENDED_DIAGNOSIS:
+            logging.info('Python T-Base eXended diagnosis reports')
+            map = dict[str, int]()
+            # Parse the diagnose messages from the output
+            for line in err.splitlines():
+                path, line_number, column_number, message_type, message, warning_code = parse_diagnose_msg(
+                    line
+                )
+                if path is not None:
+                    if path not in map:
+                        map[path] = []
+                    map[path].append(warning_code)
+            for path, warnlist in map.items():
+                uniquelist = list(set(warnlist))
+                logging.warning(f"File {path} has {len(warnlist)} warning(s). Kinds: {uniquelist}")
 
         def write_logs(out, err, failed=False):
             if self.debugmode == self.DebugMode.Debug_OutputToFile:
                 logslist = []
+
                 def write_one(buf: str, suffix: str):
                     if len(buf) == 0:
                         return
-                    
-                    log = str(s.pid) + f'_{suffix}.log'
+
+                    log = str(s.pid) + f"_{suffix}.log"
                     with open(log, "w") as f:
                         f.write(buf)
                     logslist.append(log)
-                
-                write_one(out, 'stdout')
-                write_one(err, 'stderr')
-                
-                logging.info(f"Output log files: " + ', '.join(logslist))
+
+                write_one(out, "stdout")
+                write_one(err, "stderr")
+
+                logging.info(f"Output log files: " + ", ".join(logslist))
             elif failed:
                 logging.error("Failed, printing process stderr output to stderr...")
                 print(err, file=sys.stderr)
