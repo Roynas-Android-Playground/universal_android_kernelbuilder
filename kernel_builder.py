@@ -652,10 +652,15 @@ def apply_fragments(selectedKernelConfig, device_choice):
 
 def main():
     # Check for some binaries that are required in the kernel build.
+    hasAll = True
     for bins in ["flex", "bison", "make", "git", "zip"]:
         if not shutil.which(bins):
             logging.error(f"{bins} not found in PATH")
-            return
+            hasAll = False
+    
+    if not hasAll:
+        logging.error("Please install the required binaries and try again.")
+        sys.exit(1)
     
     # Parse the main ini file.
     iniFile = Path() / "configs" / "kernelbuilder.ini"
