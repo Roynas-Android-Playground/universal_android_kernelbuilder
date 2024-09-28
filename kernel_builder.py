@@ -68,15 +68,17 @@ class PopenImpl:
                 stdout_line = s.stdout.readline()
                 ts = (datetime.now() - start).total_seconds()
                 if stdout_line and round(ts) % 5 == 0:
-                    print(
-                        f"\r\033[K[{ts}s] {stdout_line.strip()}", end="", flush=True
-                    )  # Print the stdout line with carriage return
+                    for line in stdout_line.splitlines():
+                        print(
+                            f"\r\033[K[{ts}s] {line.strip()}", end="", flush=True
+                        )  # Print the stdout line with carriage return
                     out.append(stdout_line)  # Collect the stdout output
 
                 # If the process is finished and stdout is empty, break the loop
                 if s.poll() is not None and stdout_line == "":
                     break
-        
+            
+            print()
             remaining_out, remaining_err = s.communicate()
 
             if remaining_out:
