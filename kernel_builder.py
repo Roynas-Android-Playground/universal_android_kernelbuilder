@@ -185,11 +185,11 @@ class CompilerType(Enum):
     def determine_type(path: str) -> "CompilerType":
         exename = os.path.basename(path)
         if exename.endswith("gcc"):
+            if "android" in exename:
+                return CompilerType.GCCAndroid
             return CompilerType.GCC
         elif exename == "clang":
             return CompilerType.Clang
-        elif "android-" in exename:
-            return CompilerType.GCCAndroid
         else:
             raise ValueError(f"Unsupported compiler: {exename}")
 
