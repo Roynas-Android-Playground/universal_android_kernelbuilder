@@ -368,6 +368,7 @@ class KernelConfig:
             self._parse_anykernel3()
         except configparser.NoSectionError:
             logging.info("No anykernel3 section found")
+            self.anykernel3_directory = None
         logging.debug(f"Config parsed successfully: {self.name}")
 
     def clone(self):
@@ -662,6 +663,8 @@ def main():
         logging.error("Please install the required binaries and try again.")
         sys.exit(1)
     
+    currPath = Path(os.path.dirname(os.path.abspath(__file__)))
+
     # Parse the main ini file.
     iniFile = Path() / "configs" / "kernelbuilder.ini"
     assert iniFile.is_file(), "kernelbuilder.ini not found"
@@ -760,6 +763,55 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.error(f"Error applying fragments: {str(e)}")
         return
 
+    def create_toolchain_symlink():
+        tc = currPath / 'toolchains'
+
+        def link(src: Path) -> bool:
+            dst = toolchainDirectory
+            if not src.is_dir():
+                logging.warning(f"Source directory {src} does not exist")
+                return False
+            
+            if dst.is_symlink():
+                if os.readlink(dst) == src:
+                    logging.info(f"Symlink {src} => {dst} already exists")
+                    return True
+                else:
+                    logging.info(f"Removing existing symlink {dst}")
+                    os.remove(dst)
+            
+            try:
+                os.symlink(src, dst)
+                logging.info(f"Created link {src} => {dst}")
+                return True
+            except OSError as e:
+                logging.warning(f"Failed to create link {src} => {dst}: {e}")
+                return False
+
+        match selectedKernelConfig.toolchain_config:
+            case ToolchainConfig.GCCOnly:
+                for i in ['gcc-android-', 'gcc-']:
+                    done = link(tc / f'{i}{selectedKernelConfig.kernel_arch.to_str()}')
+                    if done:
+                        break
+            # Others use clang
+            case _:
+                done = link(tc / 'clang')
+
+        if not done:
+            logging.warning("Failed to create toolchain directory or link toolchain")
+            return False
+        return True
+
+    if not toolchainDirectory.is_dir() and not toolchainDirectory.is_symlink():
+        logging.warning(f"Toolchain directory does not exist")
+        if not create_toolchain_symlink():
+            return
+    if toolchainDirectory.is_symlink() and not Path(os.readlink(toolchainDirectory)).is_dir():
+        logging.warning(f"Toolchain directory points to a non-existing directory")
+        if not create_toolchain_symlink():
+            return
+    
     try:
         compilerType, arglist, targetTriple = find_available_compilers(
             toolchainDirectory,
