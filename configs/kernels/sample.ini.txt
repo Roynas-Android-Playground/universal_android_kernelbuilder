@@ -28,6 +28,9 @@ KernelType=Image.gz-dtb
 # FullLLVMWithIAS: Same as above, but LLVM=1 and LLVM_IAS=1 is supported by the kernel.
 ToolchainConfig=FullLLVM
 
+# A list of additional environment variables sperated by comma with key=value. optional
+Env=SOME=1,YES=0
+
 [anykernel3]
 
 # AnyKernel3 directory in the kernel relative to the kernel root.

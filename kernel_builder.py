@@ -16,6 +16,7 @@ logging.basicConfig(
     format="%(asctime)s - %(filename)s:%(lineno)-3d - %(levelname)-8s: %(message)s",
 )
 
+
 class PopenImpl:
     class DebugMode(Enum):
         Off = 0
@@ -202,9 +203,7 @@ class CompilerType(Enum):
         raise ValueError(f"Unsupported compiler type: {self}")
 
     def toolchain_version(self, tcPath: Path, arch: KernelArch) -> str:
-        out, _ = popen_impl(
-            [str(tcPath / self.toolchain_exe(arch)), "--version"]
-        )
+        out, _ = popen_impl([str(tcPath / self.toolchain_exe(arch)), "--version"])
         return self.extract_version(out)
 
     def toolchain_exe(self, arch: KernelArch) -> str:
@@ -250,10 +249,7 @@ class ToolchainConfig(Enum):
     def get_config_list(self) -> list[str]:
         for item in self.makefile_command_variables:
             if item[0] == self:
-                return [
-            f"{key}={value}"
-            for key, value in item[1].items()
-            ]
+                return [f"{key}={value}" for key, value in item[1].items()]
 
 
 ToolchainConfig.makefile_command_variables = [
@@ -299,6 +295,12 @@ class KernelConfig:
         else:
             # If SimpleName is not provided, use Name with spaces replaced by underscores
             self._simple_name = self.name.replace(" ", "_")
+        self.envMap = _get_info_element("Env", fallback=None)
+        if self.envMap:
+            self.envMap = {
+                k.strip(): v.strip()
+                for k, v in (item.split("=") for item in self.envMap.split(','))
+            }
         try:
             self.kernel_arch = KernelArch.from_str(_get_info_element("KernelArch"))
             self.kernel_type = KernelType.from_str(_get_info_element("KernelType"))
@@ -318,12 +320,16 @@ class KernelConfig:
     def _parse_anykernel3(self):
         def _get_anykernel3_element(key: str, **kwargs) -> str:
             return self.config.get("anykernel3", key, **kwargs)
-        
+
         directory = _get_anykernel3_element("Directory")
         if directory:
             self.anykernel3_directory = Path(directory)
             additionalFiles = _get_anykernel3_element("AdditionalFiles", fallback=None)
-            self.anykernel3_addfiles = [Path(file) for file in additionalFiles.split(",")] if additionalFiles else []
+            self.anykernel3_addfiles = (
+                [Path(file) for file in additionalFiles.split(",")]
+                if additionalFiles
+                else []
+            )
 
     def _parse_config_fragments(self):
         self.config_fragments = []
@@ -359,7 +365,9 @@ class KernelConfig:
         """
         self.config_file = config_file
         self.config = configparser.ConfigParser()
-        assert self.config_file.is_file(), f"Kernelconfig file not found: {self.config_file}"
+        assert (
+            self.config_file.is_file()
+        ), f"Kernelconfig file not found: {self.config_file}"
         self.config.read(self.config_file)
         self._parse_info()
         self._parse_defconfig()
@@ -394,10 +402,9 @@ class KernelConfig:
 class UnImplementedError(Exception):
     pass
 
+
 def zip_files(zipfilename: str, files: list[str]):
-    logging.info(
-        f"Zipping {len(files)} files to {zipfilename}..."
-    )
+    logging.info(f"Zipping {len(files)} files to {zipfilename}...")
     with zipfile.ZipFile(zipfilename, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for f in files:
             zf.write(f)
@@ -438,8 +445,8 @@ def find_available_compilers(
     - triples (str): The target triple for the selected compiler.
     """
     exe_dir = toolchain_directory / "bin"
-    Ctype : CompilerType = None
-    versionArgv = ['--version']
+    Ctype: CompilerType = None
+    versionArgv = ["--version"]
 
     # Check the toolchain configuration
     match toolchain_config:
@@ -460,12 +467,17 @@ def find_available_compilers(
             | ToolchainConfig.FullLLVMWithIAS
         ):
             if popen_impl_test_executable(
-                exe_dir / CompilerType.Clang.toolchain_exe(kernel_arch), versionArgv,
+                exe_dir / CompilerType.Clang.toolchain_exe(kernel_arch),
+                versionArgv,
             ):
                 Ctype = CompilerType.Clang
-    
+
     if Ctype:
-        return Ctype, ToolchainConfig.get_config_list(toolchain_config), Ctype.get_triples(kernel_arch)
+        return (
+            Ctype,
+            ToolchainConfig.get_config_list(toolchain_config),
+            Ctype.get_triples(kernel_arch),
+        )
     logging.error(f"Dump: Toolchain config: {toolchain_config}")
     raise UnImplementedError(f"Unsupported toolchain configuration")
 
@@ -642,11 +654,11 @@ def main():
         if not shutil.which(bins):
             logging.error(f"{bins} not found in PATH")
             hasAll = False
-    
+
     if not hasAll:
         logging.error("Please install the required binaries and try again.")
         sys.exit(1)
-    
+
     currPath = Path(os.path.dirname(os.path.abspath(__file__)))
     if Path(os.getcwd()) != currPath:
         logging.error(f"Current directory is not {currPath.name}. Please chdir to it.")
@@ -689,7 +701,9 @@ def main():
 
     # Parse the kernel specific ini files.
     kernelConfigDir = Path() / "configs" / "kernels"
-    kernelConfigFiles = [f for f in kernelConfigDir.iterdir() if f.name.endswith(".ini")]
+    kernelConfigFiles = [
+        f for f in kernelConfigDir.iterdir() if f.name.endswith(".ini")
+    ]
     kernelConfigs = []
     for kernelConfigFile in kernelConfigFiles:
         try:
@@ -751,14 +765,14 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         return
 
     def create_toolchain_symlink():
-        tc = currPath / 'toolchains'
+        tc = currPath / "toolchains"
 
         def link(src: Path) -> bool:
             dst = toolchainDirectory
             if not src.is_dir():
                 logging.warning(f"Source directory {src} does not exist")
                 return False
-            
+
             if dst.is_symlink():
                 if os.readlink(dst) == src:
                     logging.info(f"Symlink {src} => {dst} already exists")
@@ -766,7 +780,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
                 else:
                     logging.info(f"Removing existing symlink {dst}")
                     os.remove(dst)
-            
+
             try:
                 os.symlink(src, dst)
                 logging.info(f"Created link {src} => {dst}")
@@ -777,13 +791,13 @@ If no, provide a directory with the kernel clone, else just hit enter: """
 
         match selectedKernelConfig.toolchain_config:
             case ToolchainConfig.GCCOnly:
-                for i in ['gcc-android-', 'gcc-']:
-                    done = link(tc / f'{i}{selectedKernelConfig.kernel_arch.to_str()}')
+                for i in ["gcc-android-", "gcc-"]:
+                    done = link(tc / f"{i}{selectedKernelConfig.kernel_arch.to_str()}")
                     if done:
                         break
             # Others use clang
             case _:
-                done = link(tc / 'clang')
+                done = link(tc / "clang")
 
         if not done:
             logging.warning("Failed to create toolchain directory or link toolchain")
@@ -794,18 +808,23 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.warning(f"Toolchain directory does not exist")
         if not create_toolchain_symlink():
             return
-    if toolchainDirectory.is_symlink() and not Path(os.readlink(toolchainDirectory)).is_dir():
+    if (
+        toolchainDirectory.is_symlink()
+        and not Path(os.readlink(toolchainDirectory)).is_dir()
+    ):
         logging.warning(f"Toolchain directory points to a non-existing directory")
         if not create_toolchain_symlink():
             return
-    
+
     try:
         compilerType, arglist, targetTriple = find_available_compilers(
             toolchainDirectory,
             selectedKernelConfig.kernel_arch,
             selectedKernelConfig.toolchain_config,
         )
-        logging.info(f"toolchain version: {compilerType.toolchain_version(toolchainDirectory / 'bin', selectedKernelConfig.kernel_arch)}")
+        logging.info(
+            f"toolchain version: {compilerType.toolchain_version(toolchainDirectory / 'bin', selectedKernelConfig.kernel_arch)}"
+        )
     except UnImplementedError as e:
         logging.error(f"Error finding available compilers: {str(e)}")
         return
@@ -825,12 +844,16 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     tcPath = Path(os.getcwd()) / toolchainDirectory / "bin"
     newEnv = os.environ.copy()
     newEnv["PATH"] = tcPath.as_posix() + ":" + newEnv["PATH"]
+    if selectedKernelConfig.envMap:
+        for key, value in selectedKernelConfig.envMap.items():
+            logging.debug(f"Setting ENV {key} to {value}...")
+            newEnv[key] = value
 
     # Append custom strings in the make command
     if hostString:
-        newEnv['KBUILD_BUILD_HOST'] = hostString
+        newEnv["KBUILD_BUILD_HOST"] = hostString
     if userString:
-        newEnv['KBUILD_BUILD_USER'] = userString
+        newEnv["KBUILD_BUILD_USER"] = userString
 
     # Clean the Out directory if it exists, but ask before.
     if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
@@ -850,7 +873,6 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     make_common += arglist
     make_defconfig += make_common
     make_defconfig += defconfig_list
-
 
     t = datetime.now()
     try:
@@ -880,21 +902,20 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         )
         os.chdir(AnyKernelDirectory)
         zippinglist = [
-                type,
-                "META-INF/com/google/android/update-binary",
-                "META-INF/com/google/android/updater-script",
-                "tools/ak3-core.sh",
-                "tools/busybox",
-                "tools/magiskboot",
-                "anykernel.sh",
-            ]
+            type,
+            "META-INF/com/google/android/update-binary",
+            "META-INF/com/google/android/updater-script",
+            "tools/ak3-core.sh",
+            "tools/busybox",
+            "tools/magiskboot",
+            "anykernel.sh",
+        ]
         if len(selectedKernelConfig.anykernel3_addfiles) != 0:
             zippinglist += selectedKernelConfig.anykernel3_addfiles
-            logging.info(f'Adding additional files: {[str(x) for x in selectedKernelConfig.anykernel3_addfiles]}')
-        zip_files(
-            zipname,
-            zippinglist
-        )
+            logging.info(
+                f"Adding additional files: {[str(x) for x in selectedKernelConfig.anykernel3_addfiles]}"
+            )
+        zip_files(zipname, zippinglist)
         newZipName = Path(os.getcwd()) / ".." / zipname
         try:
             newZipName.unlink()
