@@ -72,7 +72,7 @@ class PopenImpl:
                         print(
                             f"\r\033[K[{ts}s] {line.strip()}", end="", flush=True
                         )  # Print the stdout line with carriage return
-                    out.append(stdout_line)  # Collect the stdout output
+                out.append(stdout_line)  # Collect the stdout output
 
                 # If the process is finished and stdout is empty, break the loop
                 if s.poll() is not None and stdout_line == "":
@@ -85,19 +85,27 @@ class PopenImpl:
                 out.append(remaining_out)
             if remaining_err:
                 err.append(remaining_err)
+            out, err = ''.join(out), ''.join(err)
         else:
             out, err = s.communicate()
 
 
         def write_logs(out, err, failed=False):
             if self.debugmode == self.DebugMode.Debug_OutputToFile:
-                stdout_log = str(s.pid) + "_stdout.log"
-                stderr_log = str(s.pid) + "_stderr.log"
-                with open(stdout_log, "w") as f:
-                    f.write(out)
-                with open(stderr_log, "w") as f:
-                    f.write(err)
-                logging.info(f"Output log files: {stdout_log}, {stderr_log}")
+                logslist = []
+                def write_one(buf: str, suffix: str):
+                    if len(buf) == 0:
+                        return
+                    
+                    log = str(s.pid) + f'_{suffix}.log'
+                    with open(log, "w") as f:
+                        f.write(buf)
+                    logslist.append(log)
+                
+                write_one(out, 'stdout')
+                write_one(err, 'stderr')
+                
+                logging.info(f"Output log files: " + ', '.join(logslist))
             elif failed:
                 logging.error("Failed, printing process stderr output to stderr...")
                 print(err, file=sys.stderr)
