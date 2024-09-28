@@ -24,12 +24,17 @@ class DiagnoseLevel(Enum):
     Note = "note"
 
     @classmethod
-    def from_str(cls, s : str):
+    def from_str(cls, s: str):
         return cls[s.capitalize()]
 
 
 diagnose_re = re.compile(
-    r"([\/\w\.-]+):(\d+):(\d+):\s+(warning|error|note):\s+([\w '\"()]+)\s(\[(-[\w-]+)\])?")
+    r"([\/\w\.-]+):(\d+):(\d+):\s+(warning|error|note):\s+([\w ‘’'\"()]+)\s(\[(-[\w-]+)(=)?\])?"
+)
+undefined_symbol_gnuld_re = re.compile(r"undefined reference to `(\w+)'")
+undefined_symbol_lld_re = re.compile(r"ld\.lld: error: undefined symbol: ([\w ()*]+)")
+
+
 def parse_diagnose_msg(line: str) -> tuple[int, int, DiagnoseLevel, str, str]:
     matches = diagnose_re.match(line)
     if matches:
@@ -52,6 +57,17 @@ def parse_diagnose_msg(line: str) -> tuple[int, int, DiagnoseLevel, str, str]:
             logging.error("Error parsing diagnose message: %s", str(e))
 
     return None, None, None, None, None, None
+
+
+def parse_linkage_fail(line: str):
+    # Use re.search here...
+    matches = undefined_symbol_gnuld_re.search(line)
+    if matches:
+        return matches.group(1)
+    matches = undefined_symbol_lld_re.match(line)
+    if matches:
+        return matches.group(1)
+    return None
 
 
 class PopenImpl:
@@ -87,6 +103,9 @@ class PopenImpl:
         use_timed_output = kwargs.get("timed_output", None)
         if use_timed_output:
             kwargs.pop("timed_output")
+        EXTENDED_DIAGNOSIS = kwargs.get("ext_diag", None)
+        if EXTENDED_DIAGNOSIS:
+            kwargs.pop("ext_diag")
 
         s = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs
@@ -106,7 +125,7 @@ class PopenImpl:
                 if stdout_line and round(ts) % 5 == 0:
                     for line in stdout_line.splitlines():
                         print(
-                            f"\r\033[K[{ts}s] {line.strip()}", end="", flush=True
+                            f"\r\033[K[{ts}s] {line.strip()}", end='', flush=True
                         )  # Print the stdout line with carriage return
                 out.append(stdout_line)  # Collect the stdout output
 
@@ -124,23 +143,51 @@ class PopenImpl:
             out, err = "".join(out), "".join(err)
         else:
             out, err = s.communicate()
-        
-        EXTENDED_DIAGNOSIS = True
+
         if EXTENDED_DIAGNOSIS:
-            logging.info('Python T-Base eXended diagnosis reports')
+            # Handle the extended diagnostics mode
+            def log_extended_diagnostics(level, message):
+                logging.log(level, f"[LogXpert EXT] {message}")
+
+            log_extended_diagnostics(logging.INFO, "Diagnosis reports")
             map = dict[str, int]()
             # Parse the diagnose messages from the output
             for line in err.splitlines():
-                path, line_number, column_number, message_type, message, warning_code = parse_diagnose_msg(
-                    line
-                )
-                if path is not None:
-                    if path not in map:
-                        map[path] = []
-                    map[path].append(warning_code)
+                (
+                    path,
+                    line_number,
+                    column_number,
+                    message_type,
+                    message,
+                    warning_code,
+                ) = parse_diagnose_msg(line)
+                if path:
+                    match message_type:
+                        case DiagnoseLevel.Warning:
+                            if path not in map:
+                                map[path] = []
+                            map[path].append(warning_code)
+                        case DiagnoseLevel.Error:
+                            log_extended_diagnostics(
+                                logging.ERROR,
+                                f"File {path}:{line_number}:{column_number} {message}",
+                            )
+                            log_extended_diagnostics(
+                                logging.ERROR, f"Warning code: {warning_code}"
+                            )
+                else:
+                    linkage_fail_msg = parse_linkage_fail(line)
+                    if linkage_fail_msg:
+                        log_extended_diagnostics(
+                            logging.ERROR, f"UNDEFINED SYMBOL: {linkage_fail_msg}"
+                        )
             for path, warnlist in map.items():
                 uniquelist = list(set(warnlist))
-                logging.warning(f"File {path} has {len(warnlist)} warning(s). Kinds: {uniquelist}")
+                log_extended_diagnostics(
+                    logging.WARNING,
+                    f"File {path} has {len(warnlist)} warning(s). Kinds: {uniquelist}",
+                )
+            log_extended_diagnostics(logging.INFO, "End")
 
         def write_logs(out, err, failed=False):
             if self.debugmode == self.DebugMode.Debug_OutputToFile:
@@ -158,7 +205,8 @@ class PopenImpl:
                 write_one(out, "stdout")
                 write_one(err, "stderr")
 
-                logging.info(f"Output log files: " + ", ".join(logslist))
+                if len(logslist) > 0:
+                    logging.info(f"Output log files: " + ", ".join(logslist))
             elif failed:
                 logging.error("Failed, printing process stderr output to stderr...")
                 print(err, file=sys.stderr)
@@ -477,19 +525,19 @@ class KernelConfig:
             self.anykernel3_directory = None
         logging.debug(f"Config parsed successfully: {self.name}")
 
-    def clone(self):
+    def clone(self, depth=None):
+        argv = [
+            "git",
+            "clone",
+            self.repo_url,
+            "-b",
+            self.repo_branch,
+            self._simple_name,
+        ]
+        if depth:
+            argv.append("--depth=" + str(depth))
         try:
-            popen_impl(
-                [
-                    "git",
-                    "clone",
-                    self.repo_url,
-                    "--depth=1",
-                    "-b",
-                    self.repo_branch,
-                    self._simple_name,
-                ]
-            )
+            popen_impl(argv, timed_output=True)
         except RuntimeError as e:
             logging.error(f"Failed to clone repository: {e}")
             raise
@@ -514,7 +562,11 @@ def choose_from_list(choices: list[str]) -> str:
     while True:
         for i, choice in enumerate(choices, start=1):
             print(f"{i}. {choice}")
-        choice = input("Choose a device (1-" + str(len(choices)) + "): ")
+        try:
+            choice = input("Choose a device (1-" + str(len(choices)) + "): ")
+        except KeyboardInterrupt:
+            print("\Aborting...")
+            sys.exit(1)
         try:
             choice_index = int(choice) - 1
             if 0 <= choice_index < len(choices):
@@ -845,7 +897,23 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         )
         if kernelDirectory.strip() == "":
             logging.info(f"Cloning Kernel repo from {selectedKernelConfig.repo_url}...")
-            selectedKernelConfig.clone()
+            while True:
+                try:
+                    _input = input(
+                        "Enter a clone depth in number, or press enter to clone full repository"
+                    )
+                    if _input == "":
+                        depth = None
+                        break
+                    depth = int(_input)
+                except ValueError:
+                    logging.warning("Invalid clone depth. Please enter a number.")
+                    continue
+                except KeyboardInterrupt:
+                    logging.warning("Interrupted. Aborting")
+                    sys.exit(1)
+                break
+            selectedKernelConfig.clone(depth=depth)
             os.chdir(selectedKernelConfig.simple_name())
             logging.info("Done")
         else:
@@ -934,7 +1002,8 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             popen_impl(["git", "submodule", "update", "--init"])
             logging.info("Submodules initialized successfully")
         except RuntimeError:
-            pass
+            logging.error("Error initializing submodules")
+            return
 
     arch = selectedKernelConfig.kernel_arch.to_str()
     type = selectedKernelConfig.kernel_type.to_str()
@@ -979,9 +1048,9 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     t = datetime.now()
     try:
         logging.info("Make defconfig...")
-        popen_impl(make_defconfig, env=newEnv)
+        popen_impl(make_defconfig, env=newEnv, ext_diag=True)
         logging.info("Make kernel...")
-        popen_impl(make_kernel, env=newEnv, timed_output=True)
+        popen_impl(make_kernel, env=newEnv, timed_output=True, ext_diag=True)
         logging.info("Done")
     except RuntimeError as e:
         # If these failed, then goodbye.
