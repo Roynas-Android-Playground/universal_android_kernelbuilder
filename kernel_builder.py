@@ -44,7 +44,12 @@ def parse_diagnose_msg(line: str) -> tuple[int, int, DiagnoseLevel, str, str]:
             column_number = int(matches.group(3))
             message_type = DiagnoseLevel.from_str(matches.group(4))
             message = matches.group(5)
-            warning_code = matches.group(7) if matches.group(7) else "(No warning code)"
+            if matches.group(7):
+                warning_code = matches.group(7)
+            else:
+                warning_code = "Unknown"
+                logging.warning(f'Couldn\'t match warning message, text is: {line}')
+
             return (
                 file_path,
                 line_number,
