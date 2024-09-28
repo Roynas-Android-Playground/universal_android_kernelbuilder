@@ -367,7 +367,6 @@ class KernelConfig:
         try:
             self._parse_anykernel3()
         except configparser.NoSectionError:
-            logging.info("No anykernel3 section found")
             self.anykernel3_directory = None
         logging.debug(f"Config parsed successfully: {self.name}")
 
@@ -394,21 +393,6 @@ class KernelConfig:
 
 class UnImplementedError(Exception):
     pass
-
-
-def check_file(filename: str, existFn):
-    # Log that you're checking the file existence
-    logging.info(f"Checking if file exists: {filename}")
-    exists = existFn(filename)
-
-    # Log the result of the file check
-    if not exists:
-        logging.warning(f"File not found: {filename}")
-    else:
-        logging.info(f"File found: {filename}")
-
-    return exists
-
 
 def zip_files(zipfilename: str, files: list[str]):
     logging.info(
