@@ -650,7 +650,7 @@ def apply_fragments(selectedKernelConfig, device_choice):
 def main():
     # Check for some binaries that are required in the kernel build.
     hasAll = True
-    for bins in ["flex", "bison", "make", "git", "zip"]:
+    for bins in ["flex", "bison", "make", "git", "zip", "cpio"]:
         if not shutil.which(bins):
             logging.error(f"{bins} not found in PATH")
             hasAll = False
