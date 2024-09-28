@@ -29,7 +29,7 @@ class DiagnoseLevel(Enum):
 
 
 diagnose_re = re.compile(
-    r"([\/\w\.-]+):(\d+):(\d+):\s+(warning|error|note):\s+([\w ‘’'\"()]+)\s(\[(-[\w-]+)(=)?\])?"
+    r"([\/\w\.-]+):(\d+):(\d+):\s+(warning|error|note):\s+([\w ;‘’?|'\[\]\"()\-.:]+)\s(\[(-[\w-]+)(=)?\])?"
 )
 undefined_symbol_gnuld_re = re.compile(r"undefined reference to `(\w+)'")
 undefined_symbol_lld_re = re.compile(r"ld\.lld: error: undefined symbol: ([\w ()*]+)")
@@ -48,7 +48,8 @@ def parse_diagnose_msg(line: str) -> tuple[int, int, DiagnoseLevel, str, str]:
                 warning_code = matches.group(7)
             else:
                 warning_code = "Unknown"
-                logging.warning(f'Couldn\'t match warning message, text is: {line}')
+                if '-W' in line:
+                    logging.warning(f'Couldn\'t match warning message, text is: {line}')
 
             return (
                 file_path,
