@@ -565,7 +565,7 @@ def choose_from_list(choices: list[str]) -> str:
         try:
             choice = input("Choose a device (1-" + str(len(choices)) + "): ")
         except KeyboardInterrupt:
-            print("\Aborting...")
+            print("\nAborting...")
             sys.exit(1)
         try:
             choice_index = int(choice) - 1
@@ -900,12 +900,15 @@ If no, provide a directory with the kernel clone, else just hit enter: """
             while True:
                 try:
                     _input = input(
-                        "Enter a clone depth in number, or press enter to clone full repository"
+                        "Enter a clone depth in number, or press enter to clone full repository: "
                     )
                     if _input == "":
                         depth = None
                         break
                     depth = int(_input)
+                    if depth < 1:
+                        logging.warning("Invalid clone depth. Please enter a positive number.")
+                        continue
                 except ValueError:
                     logging.warning("Invalid clone depth. Please enter a number.")
                     continue
