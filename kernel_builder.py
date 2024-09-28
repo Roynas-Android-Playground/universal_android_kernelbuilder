@@ -651,6 +651,12 @@ def apply_fragments(selectedKernelConfig, device_choice):
 
 
 def main():
+    # Check for some binaries that are required in the kernel build.
+    for bins in ["flex", "bison", "make", "git", "zip"]:
+        if not shutil.which(bins):
+            logging.error(f"{bins} not found in PATH")
+            return
+    
     # Parse the main ini file.
     iniFile = Path() / "configs" / "kernelbuilder.ini"
     assert iniFile.is_file(), "kernelbuilder.ini not found"
@@ -801,11 +807,6 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     make_defconfig += make_common
     make_defconfig += defconfig_list
 
-    # Check for some binaries that are required in the kernel build.
-    for bins in ["flex", "bison", "make", "git", "zip"]:
-        if not shutil.which(bins):
-            logging.error(f"{bins} not found in PATH")
-            return
 
     t = datetime.now()
     try:
