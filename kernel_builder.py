@@ -664,6 +664,9 @@ def main():
         sys.exit(1)
     
     currPath = Path(os.path.dirname(os.path.abspath(__file__)))
+    if Path(os.getcwd()) != currPath:
+        logging.error(f"Current directory is not {currPath.name}. Please chdir to it.")
+        return
 
     # Parse the main ini file.
     iniFile = Path() / "configs" / "kernelbuilder.ini"
