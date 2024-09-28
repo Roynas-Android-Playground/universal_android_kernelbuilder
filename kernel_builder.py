@@ -862,6 +862,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         os.mkdir(OutDirectory)
 
     make_defconfig = []
+    make_kernel = []
     make_common = [
         "make",
         "ARCH=" + arch,
@@ -873,13 +874,15 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     make_common += arglist
     make_defconfig += make_common
     make_defconfig += defconfig_list
+    make_kernel += make_common
+    make_kernel += [type]
 
     t = datetime.now()
     try:
         logging.info("Make defconfig...")
         popen_impl(make_defconfig, env=newEnv)
         logging.info("Make kernel...")
-        popen_impl(make_common, env=newEnv)
+        popen_impl(make_kernel, env=newEnv)
         logging.info("Done")
     except RuntimeError as e:
         # If these failed, then goodbye.
