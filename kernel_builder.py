@@ -803,27 +803,25 @@ def apply_fragments(selectedKernelConfig, device_choice):
 
     return defconfig_list
 
+def check_bins():
+    """
+    Check if required binaries are available in the current directory.
+    """
+    requiredBinaries = ["flex", "bison", "make", "git", "zip", "cpio"]
+    for binary in requiredBinaries:
+        if shutil.which(binary) is None:
+            logging.error(f"{binary} not found in PATH")
+            sys.exit(1)
 
-def main():
-    # Check for some binaries that are required in the kernel build.
-    hasAll = True
-    for bins in ["flex", "bison", "make", "git", "zip", "cpio"]:
-        if not shutil.which(bins):
-            logging.error(f"{bins} not found in PATH")
-            hasAll = False
-
-    if not hasAll:
-        logging.error("Please install the required binaries and try again.")
-        sys.exit(1)
-
+def main(device: str = None, clean : bool = None, additional_defconfig_list : list[str] = None):
     currPath = Path(os.path.dirname(os.path.abspath(__file__)))
-    if Path(os.getcwd()) != currPath:
+    if Path(os.getcwd()).resolve() != currPath:
         logging.error(f"Current directory is not {currPath.name}. Please chdir to it.")
-        return
+        #return
 
     # Parse the main ini file.
     iniFile = Path() / "configs" / "kernelbuilder.ini"
-    assert iniFile.is_file(), "kernelbuilder.ini not found"
+    assert iniFile.is_file(), f"kernelbuilder.ini not found, cwd: {os.getcwd()}"
     mainConfig = configparser.ConfigParser()
     mainConfig.read(iniFile)
 
@@ -876,19 +874,26 @@ def main():
     logging.info(f"Parsed {len(kernelConfigs)} kernel configurations")
 
     # Ask user what device to build for.
-    device_choices = []
-    for config in kernelConfigs:
-        device_choices += config.devices
+    if device is None:
+        device_choices = []
+        for config in kernelConfigs:
+            device_choices += config.devices
 
-    # Sort the device choices alphabetically.
-    device_choices.sort()
-    device_choice = choose_from_list(device_choices)
+        # Sort the device choices alphabetically.
+        device_choices.sort()
+        device_choice = choose_from_list(device_choices)
+    else:
+        device_choice = device
     logging.info(f"Building for device: {device_choice}")
 
-    # TODO: Maybe support multiple configs per device.
-    selectedKernelConfig = [
+    selectedKernelConfigList = [
         config for config in kernelConfigs if device_choice in config.devices
-    ][0]
+    ]
+    if len(selectedKernelConfigList) == 0:
+        logging.fatal(f"No valid kernel configurations found for device {device_choice}")
+        return  
+    # TODO: Maybe support multiple configs per device.
+    selectedKernelConfig = selectedKernelConfigList[0]
     logging.info(f"Selected kernel: {selectedKernelConfig.name}")
 
     # Check if the kernel directory already exists.
@@ -933,12 +938,16 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         selectedKernelConfig.namingscheme.replace("{device}", device_choice)
     ]
 
-    # Apply fragments based on dependencies, with user interaction
-    try:
-        defconfig_list += apply_fragments(selectedKernelConfig, device_choice)
-    except RuntimeError as e:
-        logging.error(f"Error applying fragments: {str(e)}")
-        return
+    if additional_defconfig_list is None:
+        # Apply fragments based on dependencies, with user interaction
+        try:
+            defconfig_list += apply_fragments(selectedKernelConfig, device_choice)
+        except RuntimeError as e:
+            logging.error(f"Error applying fragments: {str(e)}")
+            return
+    else:
+        defconfig_list += additional_defconfig_list
+        logging.info(f"Applying additional defconfigs: {additional_defconfig_list}")
 
     def create_toolchain_symlink():
         tc = currPath / "toolchains"
@@ -1033,10 +1042,16 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         newEnv["KBUILD_BUILD_USER"] = userString
 
     # Clean the Out directory if it exists, but ask before.
-    if os.path.exists(OutDirectory) and ask_yesno("Clean the Out directory?"):
+    def cleanFn():
         logging.info("Make clean...")
         shutil.rmtree(OutDirectory)
         os.mkdir(OutDirectory)
+
+    if clean is None:
+        if OutDirectory.is_dir() and ask_yesno("Clean the Out directory?"):
+            cleanFn()
+    elif clean == True:
+        cleanFn()
 
     make_defconfig = []
     make_kernel = []
@@ -1070,6 +1085,7 @@ If no, provide a directory with the kernel clone, else just hit enter: """
     with open(OutDirectory / "include" / "generated" / "utsrelease.h") as f:
         kver = match_and_get_first(r'"([^"]+)"', f.read())
 
+    newZipName = Path()
     if selectedKernelConfig.anykernel3_directory:
         AnyKernelDirectory = selectedKernelConfig.anykernel3_directory
 
@@ -1108,7 +1124,9 @@ If no, provide a directory with the kernel clone, else just hit enter: """
         logging.info("Skipping AnyKernel3 zip creation")
     logging.info("Kernel version: " + kver)
     logging.info("Elapsed time: " + str(t.total_seconds()) + " seconds")
-
+    os.chdir(currPath)
+    return newZipName
 
 if __name__ == "__main__":
+    check_bins()
     main()
